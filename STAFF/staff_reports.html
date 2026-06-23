@@ -1,0 +1,1252 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sales Reports | SmartStock</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap"
+    rel="stylesheet" />
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --mocha: #4A2C2A;
+      --mocha-deep: #2E1A18;
+      --mocha-mid: #6B3D3A;
+      --cream: #F5ECD7;
+      --cream-light: #FBF6EE;
+      --cream-dark: #E8D8BA;
+      --charcoal: #2C2C2C;
+      --charcoal-mid: #444444;
+      --gold: #C9943A;
+      --gold-light: #E8B860;
+      --sage: #7A9E7E;
+      --red-soft: #C0392B;
+      --sidebar-w: 240px;
+      --header-h: 64px;
+      --font-display: 'Playfair Display', serif;
+      --font-body: 'DM Sans', sans-serif;
+      --font-mono: 'DM Mono', monospace;
+      --shadow-sm: 0 2px 8px rgba(74, 44, 42, .10);
+      --shadow-md: 0 6px 24px rgba(74, 44, 42, .15);
+      --shadow-lg: 0 12px 40px rgba(74, 44, 42, .22);
+      --radius: 12px;
+      --radius-lg: 18px;
+    }
+
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: var(--font-body);
+      background: var(--cream-light);
+      color: var(--charcoal);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: var(--cream);
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--mocha-mid);
+      border-radius: 99px;
+    }
+
+    /* ── HEADER ── */
+    #app-header {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 1000;
+      height: var(--header-h);
+      background: var(--mocha-deep);
+      display: flex;
+      align-items: center;
+      padding: 0 24px 0 0;
+      box-shadow: 0 2px 20px rgba(0, 0, 0, .35);
+    }
+
+    .header-brand {
+      width: var(--sidebar-w);
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 20px;
+      border-right: 1px solid rgba(255, 255, 255, .08);
+    }
+
+    .brand-logo {
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      background: var(--gold);
+      color: var(--mocha-deep);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      box-shadow: 0 2px 10px rgba(201, 148, 58, .45);
+      flex-shrink: 0;
+    }
+
+    .brand-text .name {
+      font-family: var(--font-display);
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--cream);
+    }
+
+    .brand-text .sub {
+      font-size: 10px;
+      color: var(--gold-light);
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+    }
+
+    .header-center {
+      padding-left: 22px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .portal-badge {
+      background: rgba(201, 148, 58, .18);
+      color: var(--gold-light);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border-radius: 99px;
+    }
+
+    .header-view-label {
+      font-size: 13px;
+      color: rgba(245, 236, 215, .5);
+    }
+
+    .header-right {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .header-clock {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: rgba(245, 236, 215, .55);
+    }
+
+    .header-link {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      background: rgba(122, 158, 126, .14);
+      border: 1px solid rgba(122, 158, 126, .28);
+      color: #9ecba2;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 99px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all .2s;
+    }
+
+    .header-link:hover {
+      background: rgba(122, 158, 126, .26);
+      color: #9ecba2;
+    }
+
+    .header-user {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255, 255, 255, .07);
+      border: 1px solid rgba(255, 255, 255, .10);
+      border-radius: 99px;
+      padding: 5px 14px 5px 5px;
+      cursor: pointer;
+    }
+
+    .header-avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--gold);
+      color: var(--mocha-deep);
+      font-weight: 700;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .header-user-name {
+      font-size: 13px;
+      color: var(--cream);
+      font-weight: 500;
+    }
+
+    /* ── SIDEBAR ── */
+    #sidebar {
+      position: fixed;
+      top: var(--header-h);
+      left: 0;
+      bottom: 0;
+      width: var(--sidebar-w);
+      z-index: 900;
+      background: var(--mocha-deep);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+
+    .sidebar-section-label {
+      padding: 20px 20px 6px;
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: rgba(245, 236, 215, .3);
+    }
+
+    a.nav-item {
+      text-decoration: none;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 11px 20px;
+      color: rgba(245, 236, 215, .6);
+      cursor: pointer;
+      font-size: 13.5px;
+      font-weight: 500;
+      border-left: 3px solid transparent;
+      transition: all .2s;
+      user-select: none;
+    }
+
+    .nav-item i {
+      width: 18px;
+      text-align: center;
+      font-size: 14px;
+    }
+
+    .nav-item:hover {
+      background: rgba(255, 255, 255, .06);
+      color: var(--cream);
+    }
+
+    .nav-item.active {
+      background: rgba(201, 148, 58, .12);
+      color: var(--gold-light);
+      border-left-color: var(--gold);
+    }
+
+    .nav-item.active i {
+      color: var(--gold);
+    }
+
+    .nav-badge {
+      margin-left: auto;
+      background: var(--red-soft);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 7px;
+      border-radius: 99px;
+    }
+
+    .sidebar-divider {
+      border: none;
+      border-top: 1px solid rgba(255, 255, 255, .07);
+      margin: 8px 16px;
+    }
+
+    .sidebar-footer {
+      margin-top: auto;
+      padding: 16px 20px;
+      border-top: 1px solid rgba(255, 255, 255, .07);
+      text-align: center;
+    }
+
+    .sidebar-footer p {
+      font-size: 10px;
+      color: rgba(245, 236, 215, .22);
+      line-height: 1.7;
+    }
+
+    /* ── MAIN ── */
+    #main {
+      margin-left: var(--sidebar-w);
+      margin-top: var(--header-h);
+      min-height: calc(100vh - var(--header-h));
+    }
+
+    .page-strip {
+      background: var(--cream);
+      border-bottom: 1px solid var(--cream-dark);
+      padding: 15px 26px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .page-strip h1 {
+      font-family: var(--font-display);
+      font-size: 21px;
+      font-weight: 700;
+      color: var(--mocha-deep);
+    }
+
+    .page-strip .sub {
+      font-size: 12px;
+      color: var(--mocha-mid);
+      margin-top: 1px;
+    }
+
+    /* ── KPI CARDS ── */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+      gap: 15px;
+      margin-bottom: 24px;
+    }
+
+    .kpi-card {
+      background: var(--cream);
+      border: 1.5px solid var(--cream-dark);
+      border-radius: var(--radius-lg);
+      padding: 20px 20px 18px;
+      box-shadow: var(--shadow-sm);
+      position: relative;
+      overflow: hidden;
+      transition: transform .2s, box-shadow .2s;
+    }
+
+    .kpi-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: var(--accent, var(--gold));
+      border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    }
+
+    .kpi-card:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-md);
+    }
+
+    .kpi-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 9px;
+      background: var(--accent-bg, rgba(201, 148, 58, .1));
+      color: var(--accent, var(--gold));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      margin-bottom: 13px;
+    }
+
+    .kpi-label {
+      font-size: 10.5px;
+      color: #888;
+      font-weight: 700;
+      letter-spacing: .8px;
+      text-transform: uppercase;
+      margin-bottom: 5px;
+    }
+
+    .kpi-value {
+      font-family: var(--font-display);
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--mocha-deep);
+      line-height: 1;
+    }
+
+    .kpi-sub {
+      font-size: 11px;
+      color: #aaa;
+      margin-top: 4px;
+    }
+
+    .kpi-trend {
+      font-size: 11px;
+      font-weight: 600;
+      margin-top: 4px;
+    }
+
+    .kpi-trend.up {
+      color: var(--sage);
+    }
+
+    .kpi-trend.warn {
+      color: #e67e22;
+    }
+
+    /* ── DASH CARDS ── */
+    .dash-card {
+      background: var(--cream);
+      border: 1.5px solid var(--cream-dark);
+      border-radius: var(--radius-lg);
+      padding: 20px 22px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .dash-card-title {
+      font-family: var(--font-display);
+      font-size: 16px;
+      color: var(--mocha-deep);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .dash-card-title i {
+      color: var(--gold);
+      font-size: 14px;
+    }
+
+    /* ── TABLES ── */
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .data-table thead {
+      background: var(--mocha-deep);
+    }
+
+    .data-table th {
+      padding: 11px 15px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      color: rgba(245, 236, 215, .65);
+      text-align: left;
+    }
+
+    .data-table td {
+      padding: 10px 15px;
+      font-size: 13px;
+      color: var(--charcoal);
+      border-bottom: 1px solid var(--cream-dark);
+    }
+
+    .data-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .data-table tr:hover td {
+      background: rgba(201, 148, 58, .03);
+    }
+
+    .table-wrap {
+      background: var(--cream);
+      border: 1.5px solid var(--cream-dark);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .status-pill {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 99px;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .pill-success {
+      background: rgba(122, 158, 126, .14);
+      color: var(--sage);
+    }
+
+    .pill-warn {
+      background: rgba(230, 126, 34, .12);
+      color: #e67e22;
+    }
+
+    .pill-gold {
+      background: rgba(201, 148, 58, .14);
+      color: var(--gold);
+    }
+
+    .pill-red {
+      background: rgba(192, 57, 43, .10);
+      color: var(--red-soft);
+    }
+
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 99px;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .tag-hot {
+      background: rgba(192, 57, 43, .1);
+      color: #c0392b;
+    }
+
+    .tag-iced {
+      background: rgba(52, 152, 219, .1);
+      color: #2980b9;
+    }
+
+    .tag-pastry {
+      background: rgba(243, 156, 18, .12);
+      color: #d68910;
+    }
+
+    .tag-supply {
+      background: rgba(122, 158, 126, .12);
+      color: var(--sage);
+    }
+
+    /* ── SEARCH / TOOLBAR ── */
+    .filter-select {
+      padding: 8px 13px;
+      border-radius: 8px;
+      border: 1.5px solid var(--cream-dark);
+      background: var(--cream);
+      font-family: var(--font-body);
+      font-size: 13px;
+      color: var(--charcoal);
+      outline: none;
+      cursor: pointer;
+    }
+
+    .btn-primary {
+      padding: 9px 17px;
+      border-radius: 8px;
+      background: var(--mocha);
+      color: var(--cream);
+      border: none;
+      font-family: var(--font-body);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .2s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-primary:hover {
+      background: var(--mocha-mid);
+    }
+
+    .btn-outline {
+      padding: 8px 16px;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--mocha-mid);
+      border: 1.5px solid var(--cream-dark);
+      font-family: var(--font-body);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .2s;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .btn-outline:hover {
+      border-color: var(--mocha);
+      color: var(--mocha);
+    }
+
+    /* ── CHARTS ── */
+    .charts-grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 18px;
+      margin-bottom: 18px;
+    }
+
+    @media (max-width:900px) {
+      .charts-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .chart-card {
+      background: var(--cream);
+      border: 1.5px solid var(--cream-dark);
+      border-radius: var(--radius-lg);
+      padding: 20px 22px;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .chart-title {
+      font-family: var(--font-display);
+      font-size: 15px;
+      color: var(--mocha-deep);
+      margin-bottom: 3px;
+    }
+
+    .chart-sub {
+      font-size: 11px;
+      color: #aaa;
+      margin-bottom: 14px;
+    }
+
+    .period-tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 0;
+    }
+
+    .period-tab {
+      padding: 7px 20px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1.5px solid var(--cream-dark);
+      background: var(--cream);
+      color: var(--charcoal-mid);
+      transition: all .2s;
+    }
+
+    .period-tab.active {
+      background: var(--mocha);
+      color: var(--cream);
+      border-color: var(--mocha);
+    }
+
+    .report-kpis {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .rpt-mini {
+      background: var(--cream);
+      border: 1.5px solid var(--cream-dark);
+      border-radius: var(--radius);
+      padding: 13px 16px;
+      transition: all 0.3s ease;
+    }
+
+    .rpt-mini-label {
+      font-size: 10px;
+      color: #888;
+      font-weight: 700;
+      letter-spacing: .8px;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .rpt-mini-value {
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--mocha-deep);
+    }
+
+    .rpt-mini-trend {
+      font-size: 11px;
+      color: var(--sage);
+      margin-top: 3px;
+    }
+
+    /* ── TEXT UTILS ── */
+    .text-mono {
+      font-family: var(--font-mono);
+    }
+
+    .text-gold {
+      color: var(--gold);
+    }
+
+    /* ── RECENT TABLE ── */
+    .rec-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .rec-table th {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: #888;
+      border-bottom: 1.5px solid var(--cream-dark);
+      padding: 0 8px 8px;
+      text-align: left;
+    }
+
+    .rec-table td {
+      padding: 8px 8px;
+      font-size: 12.5px;
+      border-bottom: 1px solid var(--cream-dark);
+      color: var(--charcoal);
+      transition: all 0.3s ease;
+    }
+
+    .rec-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    /* ── TOAST ── */
+    #toast-container {
+      position: fixed;
+      bottom: 22px;
+      right: 22px;
+      z-index: 99999;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+
+    .toast-msg {
+      background: var(--charcoal);
+      color: var(--cream);
+      font-size: 13px;
+      font-weight: 500;
+      padding: 11px 16px;
+      border-radius: 10px;
+      box-shadow: var(--shadow-md);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      animation: toastIn .28s ease;
+    }
+
+    .toast-msg.success {
+      border-left: 3px solid var(--sage);
+    }
+
+    @keyframes toastIn {
+      from {
+        opacity: 0;
+        transform: translateY(14px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    /* CUSTOM TIME FILTER INPUT STYLING */
+    .time-filter-wrapper {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--cream);
+      border: 1.5px solid var(--cream-dark);
+      border-radius: 8px;
+      padding: 6px 12px;
+      height: 38px;
+    }
+
+    .time-filter-wrapper input[type="time"] {
+      border: none;
+      background: transparent;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--mocha-deep);
+      outline: none;
+      cursor: pointer;
+    }
+
+    .all-day-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--mocha-deep);
+      cursor: pointer;
+      user-select: none;
+    }
+  </style>
+</head>
+
+<body>
+
+  <header id="app-header">
+    <div class="header-brand">
+      <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
+      <div class="brand-text">
+        <div class="name">SmartStock</div>
+        <div class="sub">Bean There Café</div>
+      </div>
+    </div>
+    <div class="header-center"><span class="portal-badge">Staff Panel</span><span class="header-view-label">Sales
+        Reports</span></div>
+    <div class="header-right">
+        <div class="header-avatar">AJ</div><span class="header-user-name">Ana Reyes</span>
+      </div>
+    </div>
+  </header>
+
+  <nav id="sidebar">
+    <div class="sidebar-section-label">Staff Panel</div>
+    <a href="staffdashboard.html" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
+    <a href="staff_transactions.html" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
+    <a href="staff_inventory.html" class="nav-item"><i class="fas fa-boxes-stacked"></i> Inventory <span
+        class="nav-badge">3</span></a>
+    <a href="staff_reports.html" class="nav-item active"><i class="fas fa-chart-bar"></i> Sales Report</a>
+    <hr class="sidebar-divider" />
+    <div class="sidebar-section-label">Settings</div>
+    
+  </nav>
+
+  <div id="main">
+    <div class="page-strip">
+      <div>
+        <h1><i class="fas fa-chart-bar" style="color:var(--gold);font-size:18px;margin-right:8px;"></i>Sales Reports
+        </h1>
+        <div class="sub">Analyze performance trends across time periods</div>
+      </div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-outline" onclick="showToast('Printed!','success')"><i class="fas fa-print"></i>
+          Print</button>
+        <button class="btn-primary" onclick="showToast('Exported as PDF!','success')"><i class="fas fa-file-pdf"></i>
+          Export PDF</button>
+      </div>
+    </div>
+
+    <div style="padding:22px 26px;">
+
+      <div
+        style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:15px;">
+
+        <div class="period-tabs" id="period-tabs">
+          <button class="period-tab active" onclick="switchPeriod('daily',this)">Daily</button>
+          <button class="period-tab" onclick="switchPeriod('weekly',this)">Weekly</button>
+          <button class="period-tab" onclick="switchPeriod('monthly',this)">Monthly</button>
+          <button class="period-tab" onclick="switchPeriod('yearly',this)">Yearly</button>
+        </div>
+
+        <div style="display:flex; gap:12px; align-items:center;">
+
+          <div class="time-filter-wrapper" title="Filter by hours of the day">
+            <label class="all-day-label">
+              <input type="checkbox" id="all-day-cb" checked onchange="toggleAllDay()"> All Day
+            </label>
+
+            <div id="time-inputs"
+              style="display:none; align-items:center; gap:8px; padding-left:10px; border-left:1.5px solid var(--cream-dark); margin-left:4px;">
+              <i class="fas fa-clock" style="color:#aaa; font-size:13px;"></i>
+              <input type="time" id="time-start" value="07:00" onchange="updateReportDisplay()">
+              <span style="font-size:12px; color:#aaa; font-weight:600;">to</span>
+              <input type="time" id="time-end" value="19:00" onchange="updateReportDisplay()">
+            </div>
+          </div>
+
+          <div class="time-filter-wrapper" title="Filter by date range" style="padding:6px 12px;">
+            <i class="fas fa-calendar-alt" style="color:#aaa; font-size:13px; margin-right:4px;"></i>
+            <input type="date" id="date-from" value="2024-10-01" onchange="updateReportDisplay()"
+              style="border:none; background:transparent; font-family:var(--font-mono); font-size:13px; font-weight:600; color:var(--charcoal); outline:none; width:110px;">
+            <span style="font-size:12px; color:#aaa; font-weight:600; margin:0 8px;">to</span>
+            <input type="date" id="date-till" value="2024-10-08" onchange="updateReportDisplay()"
+              style="border:none; background:transparent; font-family:var(--font-mono); font-size:13px; font-weight:600; color:var(--charcoal); outline:none; width:110px;">
+          </div>
+
+          <select class="filter-select" id="report-category" onchange="switchCategory(this.value)"
+            style="border-color:var(--mocha); font-weight:600; height: 38px;">
+            <option value="All">All Categories</option>
+            <option value="Hot">Hot Drinks</option>
+            <option value="Iced">Iced Drinks</option>
+            <option value="Pastry">Pastries</option>
+          </select>
+        </div>
+
+
+      </div>
+
+      <div class="report-kpis">
+        <div class="rpt-mini">
+          <div class="rpt-mini-label">Period Revenue</div>
+          <div class="rpt-mini-value" id="rpt-rev">₱4,820</div>
+          <div class="rpt-mini-trend"><i class="fas fa-arrow-trend-up"></i> +12.4%</div>
+        </div>
+        <div class="rpt-mini">
+          <div class="rpt-mini-label">Transactions</div>
+          <div class="rpt-mini-value" id="rpt-txn">67</div>
+          <div class="rpt-mini-trend"><i class="fas fa-arrow-trend-up"></i> +8 vs yest</div>
+        </div>
+
+        <div class="rpt-mini">
+          <div class="rpt-mini-label" id="rpt-avg-title">Avg. Order Value</div>
+          <div class="rpt-mini-value" id="rpt-avg">₱71.94</div>
+          <div class="rpt-mini-trend" style="color:#aaa;" id="rpt-avg-lbl">Per transaction</div>
+        </div>
+
+        <div class="rpt-mini">
+          <div class="rpt-mini-label" id="rpt-top-lbl">Top Category</div>
+          <div class="rpt-mini-value" id="rpt-top-val" style="font-size:16px;">Hot Drinks</div>
+          <div class="rpt-mini-trend" id="rpt-top-sub" style="color:#aaa;">48% of sales</div>
+        </div>
+      </div>
+
+      <div class="charts-grid">
+        <div class="chart-card">
+          <div class="chart-title">Revenue Trend</div>
+          <div class="chart-sub" id="chart-sublabel">Today's sales breakdown by hour</div>
+          <canvas id="salesChart" height="230"></canvas>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Sales by Category</div>
+          <div class="chart-sub">Proportion per product category</div>
+          <canvas id="catChart" height="230"></canvas>
+        </div>
+      </div>
+
+      <div class="dash-card">
+        <div class="dash-card-title"><i class="fas fa-trophy"></i>Top Selling Products</div>
+        <table class="rec-table">
+          <thead>
+            <tr>
+              <th>Rank</th>
+              <th>Product</th>
+              <th>Category</th>
+              <th>Units Sold</th>
+              <th>Revenue</th>
+              <th>Share</th>
+            </tr>
+          </thead>
+          <tbody id="top-selling-tbody">
+            <tr data-category="Hot">
+              <td>1</td>
+              <td style="font-weight:600;">Caramel Latte</td>
+              <td><span class="tag tag-hot">Hot</span></td>
+              <td class="text-mono">196</td>
+              <td class="text-mono text-gold">₱22,540</td>
+              <td>
+                <div style="display:flex;align-items:center;gap:7px;">
+                  <div style="width:70px;height:6px;background:var(--cream-dark);border-radius:3px;overflow:hidden;">
+                    <div style="width:66%;height:100%;background:var(--gold);border-radius:3px;"></div>
+                  </div><span style="font-size:12px;">66%</span>
+                </div>
+              </td>
+            </tr>
+            <tr data-category="Iced">
+              <td>2</td>
+              <td style="font-weight:600;">Iced Americano</td>
+              <td><span class="tag tag-iced">Iced</span></td>
+              <td class="text-mono">143</td>
+              <td class="text-mono text-gold">₱12,870</td>
+              <td>
+                <div style="display:flex;align-items:center;gap:7px;">
+                  <div style="width:70px;height:6px;background:var(--cream-dark);border-radius:3px;overflow:hidden;">
+                    <div style="width:42%;height:100%;background:var(--mocha-mid);border-radius:3px;"></div>
+                  </div><span style="font-size:12px;">42%</span>
+                </div>
+              </td>
+            </tr>
+            <tr data-category="Pastry">
+              <td>3</td>
+              <td style="font-weight:600;">Croissant</td>
+              <td><span class="tag tag-pastry">Pastry</span></td>
+              <td class="text-mono">98</td>
+              <td class="text-mono text-gold">₱6,860</td>
+              <td>
+                <div style="display:flex;align-items:center;gap:7px;">
+                  <div style="width:70px;height:6px;background:var(--cream-dark);border-radius:3px;overflow:hidden;">
+                    <div style="width:28%;height:100%;background:var(--sage);border-radius:3px;"></div>
+                  </div><span style="font-size:12px;">28%</span>
+                </div>
+              </td>
+            </tr>
+            <tr data-category="Hot">
+              <td>4</td>
+              <td>Matcha Latte</td>
+              <td><span class="tag tag-hot">Hot</span></td>
+              <td class="text-mono">87</td>
+              <td class="text-mono text-gold">₱12,615</td>
+              <td>
+                <div style="display:flex;align-items:center;gap:7px;">
+                  <div style="width:70px;height:6px;background:var(--cream-dark);border-radius:3px;overflow:hidden;">
+                    <div style="width:24%;height:100%;background:#bbb;border-radius:3px;"></div>
+                  </div><span style="font-size:12px;">24%</span>
+                </div>
+              </td>
+            </tr>
+            <tr data-category="Pastry">
+              <td>5</td>
+              <td>Blueberry Muffin</td>
+              <td><span class="tag tag-pastry">Pastry</span></td>
+              <td class="text-mono">64</td>
+              <td class="text-mono text-gold">₱4,480</td>
+              <td>
+                <div style="display:flex;align-items:center;gap:7px;">
+                  <div style="width:70px;height:6px;background:var(--cream-dark);border-radius:3px;overflow:hidden;">
+                    <div style="width:18%;height:100%;background:#ccc;border-radius:3px;"></div>
+                  </div><span style="font-size:12px;">18%</span>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container"></div>
+
+  <script>
+    const chartData = {
+      daily: { labels: ['7 AM', '9 AM', '11 AM', '1 PM', '3 PM', '5 PM', '7 PM'], revenue: [350, 680, 1250, 980, 540, 720, 300], txn: [8, 15, 28, 22, 12, 16, 7], sub: 'Today\'s sales breakdown by hour', revBase: 4820, txnBase: 67, avgBase: 4820 },
+      weekly: { labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], revenue: [3200, 4100, 3800, 4820, 5100, 6200, 5800], txn: [45, 58, 50, 67, 72, 89, 81], sub: 'Weekly sales breakdown (Mon–Sun)', revBase: 33740, txnBase: 469, avgBase: 4820 },
+      monthly: { labels: ['Week 1', 'Week 2', 'Week 3', 'Week 4'], revenue: [24800, 31200, 28900, 36400], txn: [346, 435, 403, 508], sub: 'Monthly sales breakdown by week', revBase: 121300, txnBase: 1692, avgBase: 4332 },
+      yearly: { labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'], revenue: [98000, 87000, 112000, 105000, 118000, 132000, 145000, 138000, 151000, 142000, 165000, 182000], txn: [1360, 1210, 1556, 1460, 1639, 1832, 2016, 1917, 2097, 1972, 2292, 2530], sub: 'Yearly sales breakdown by month', revBase: 1575000, txnBase: 21881, avgBase: 4315 }
+    };
+
+    // Modifiers for dummy data
+    const categoryMultipliers = { 'All': 1, 'Hot': 0.48, 'Iced': 0.32, 'Pastry': 0.20 };
+    let salesChart = null, catChart = null, currentPeriod = 'daily', currentCat = 'All';
+
+    document.addEventListener('DOMContentLoaded', () => {
+      updateClock(); setInterval(updateClock, 1000);
+      updateReportDisplay();
+    });
+
+    function updateClock() {
+      const clock = document.getElementById('clock');
+      if (clock) clock.textContent = new Date().toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+
+    function switchPeriod(p, el) {
+      currentPeriod = p;
+      document.querySelectorAll('.period-tab').forEach(t => t.classList.remove('active'));
+      el.classList.add('active');
+      updateReportDisplay();
+    }
+
+    function switchCategory(cat) {
+      currentCat = cat;
+      updateReportDisplay();
+      filterTable();
+    }
+
+    // Shows or hides the specific time inputs based on the All Day checkbox
+    function toggleAllDay() {
+      const isAllDay = document.getElementById('all-day-cb').checked;
+      document.getElementById('time-inputs').style.display = isAllDay ? 'none' : 'flex';
+      updateReportDisplay();
+    }
+
+    // Calculates a multiplier based on the selected time duration vs a 12 hour day (7AM to 7PM)
+    function getTimeMultiplier() {
+      if (document.getElementById('all-day-cb').checked) {
+        return 1;
+      }
+
+      const startStr = document.getElementById('time-start').value;
+      const endStr = document.getElementById('time-end').value;
+
+      if (!startStr || !endStr) return 1;
+
+      const [sH, sM] = startStr.split(':').map(Number);
+      const [eH, eM] = endStr.split(':').map(Number);
+
+      const startDec = sH + (sM / 60);
+      const endDec = eH + (eM / 60);
+
+      if (endDec <= startDec) return 0.05;
+
+      let durationRatio = (endDec - startDec) / 12;
+
+      if (durationRatio > 1) durationRatio = 1;
+      if (durationRatio < 0.05) durationRatio = 0.05;
+
+      return durationRatio;
+    }
+
+    // Period base days for date multiplier
+    const periodBaseDays = {
+      daily: 1,
+      weekly: 7,
+      monthly: 30,
+      yearly: 365
+    };
+
+    // Calculates date range multiplier: days in range / base days for period
+    function getDateMultiplier() {
+      const fromStr = document.getElementById('date-from').value;
+      const tillStr = document.getElementById('date-till').value;
+
+      if (!fromStr || !tillStr) return 1;
+
+      const fromDate = new Date(fromStr + 'T00:00:00');
+      const tillDate = new Date(tillStr + 'T23:59:59');
+
+      if (tillDate < fromDate) return 0.05;
+
+      const daysDiff = Math.ceil((tillDate - fromDate) / (1000 * 60 * 60 * 24)) + 1;
+      const baseDays = periodBaseDays[currentPeriod] || 1;
+
+      let dateRatio = daysDiff / baseDays;
+
+      if (dateRatio > 1) dateRatio = 1;
+      if (dateRatio < 0.05) dateRatio = 0.05;
+
+      return dateRatio;
+    }
+
+
+    function filterTable() {
+      const rows = document.querySelectorAll('#top-selling-tbody tr');
+      let rankCounter = 1;
+      rows.forEach(row => {
+        if (currentCat === 'All' || row.getAttribute('data-category') === currentCat) {
+          row.style.display = '';
+          row.cells[0].textContent = rankCounter === 1 ? '🥇' : (rankCounter === 2 ? '🥈' : (rankCounter === 3 ? '🥉' : rankCounter));
+          rankCounter++;
+        } else {
+          row.style.display = 'none';
+        }
+      });
+    }
+
+    function updateReportDisplay() {
+      const d = chartData[currentPeriod];
+
+      const catMult = categoryMultipliers[currentCat];
+      const timeMult = getTimeMultiplier();
+      const dateMult = getDateMultiplier();
+      const totalMult = catMult * timeMult * dateMult;
+
+      document.getElementById('chart-sublabel').textContent = d.sub;
+
+      // Calculate current dynamic values
+      const currentRev = Math.round(d.revBase * totalMult);
+      const currentTxn = Math.round(d.txnBase * totalMult);
+
+      // Update KPI Cards 1 & 2
+      document.getElementById('rpt-rev').textContent = '₱' + currentRev.toLocaleString();
+      document.getElementById('rpt-txn').textContent = currentTxn.toLocaleString();
+
+      // DYNAMICALLY UPDATE KPI CARD 3 (Avg. Order Value vs Avg. Daily)
+      const avgLbl = document.getElementById('rpt-avg-title');
+      const avgVal = document.getElementById('rpt-avg');
+      const avgSub = document.getElementById('rpt-avg-lbl');
+      const isAllDay = document.getElementById('all-day-cb').checked;
+
+      if (currentPeriod === 'daily') {
+        avgLbl.textContent = 'Avg. Order Value';
+        // Prevent division by zero if transactions drop to 0
+        const avgOrder = currentTxn > 0 ? (currentRev / currentTxn) : 0;
+        avgVal.textContent = '₱' + avgOrder.toFixed(2);
+        avgSub.textContent = "Per transaction";
+      } else {
+        avgLbl.textContent = 'Avg. Daily';
+        avgVal.textContent = '₱' + Math.round(d.avgBase * totalMult).toLocaleString();
+        if (!isAllDay && timeMult < 1) {
+          avgSub.textContent = "For selected hours";
+        } else {
+          avgSub.textContent = "Per operating day";
+        }
+      }
+
+      // Update Top Category / Product label
+      const lbl = document.getElementById('rpt-top-lbl');
+      const val = document.getElementById('rpt-top-val');
+      const sub = document.getElementById('rpt-top-sub');
+
+      if (currentCat === 'All') {
+        lbl.textContent = 'Top Category'; val.textContent = 'Hot Drinks'; sub.textContent = '48% of sales';
+      } else if (currentCat === 'Hot') {
+        lbl.textContent = 'Top Product'; val.textContent = 'Caramel Latte'; sub.textContent = 'Best Seller';
+      } else if (currentCat === 'Iced') {
+        lbl.textContent = 'Top Product'; val.textContent = 'Iced Americano'; sub.textContent = 'Best Seller';
+      } else if (currentCat === 'Pastry') {
+        lbl.textContent = 'Top Product'; val.textContent = 'Croissant'; sub.textContent = 'Best Seller';
+      }
+
+      initCharts(d, totalMult);
+    }
+
+
+    function initCharts(data, mult) {
+      const sc = document.getElementById('salesChart');
+      const cc = document.getElementById('catChart');
+      if (!sc || !cc) return;
+      if (salesChart) salesChart.destroy();
+      if (catChart) catChart.destroy();
+
+      const scaledRev = data.revenue.map(val => Math.round(val * mult));
+      const scaledTxn = data.txn.map(val => Math.round(val * mult));
+
+      salesChart = new Chart(sc, {
+        type: 'bar',
+        data: {
+          labels: data.labels,
+          datasets: [
+            { label: `Revenue (₱)`, data: scaledRev, backgroundColor: '#C9943Acc', borderColor: '#C9943A', borderWidth: 2, borderRadius: 6, yAxisID: 'y' },
+            { label: 'Transactions', data: scaledTxn, type: 'line', borderColor: '#4A2C2A', backgroundColor: '#4A2C2A22', tension: .4, pointBackgroundColor: '#4A2C2A', pointRadius: 4, yAxisID: 'y1' }
+          ]
+        },
+        options: {
+          responsive: true, interaction: { mode: 'index', intersect: false },
+          plugins: { legend: { labels: { font: { family: "'DM Sans',sans-serif", size: 11 }, color: '#666' } } },
+          scales: {
+            y: { grid: { color: 'rgba(0,0,0,.05)' }, ticks: { color: '#999', font: { size: 10 }, callback: v => '₱' + v.toLocaleString() } },
+            y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#999', font: { size: 10 } } },
+            x: { grid: { display: false }, ticks: { color: '#999', font: { size: 11 } } }
+          }
+        }
+      });
+
+      catChart = new Chart(cc, {
+        type: 'doughnut',
+        data: {
+          labels: ['Hot Drinks', 'Iced Drinks', 'Pastries'],
+          datasets: [{ data: [48, 32, 20], backgroundColor: ['#4A2C2A', '#C9943A', '#7A9E7E'], borderWidth: 0, hoverOffset: 8 }]
+        },
+        options: { responsive: true, cutout: '68%', plugins: { legend: { position: 'bottom', labels: { font: { family: "'DM Sans',sans-serif", size: 12 }, color: '#666', padding: 16 } } } }
+      });
+    }
+
+    function showToast(msg, type = 'success') {
+      const c = document.getElementById('toast-container');
+      if (!c) return;
+      const t = document.createElement('div');
+      t.className = `toast-msg ${type}`;
+      t.innerHTML = `<i class="fas ${type === 'success' ? 'fa-circle-check' : 'fa-triangle-exclamation'}"></i> ${msg}`;
+      c.appendChild(t);
+      setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, 2800);
+    }
+  </script>
+</body>
+
+</html>
