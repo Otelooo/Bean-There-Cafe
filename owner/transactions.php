@@ -1,3 +1,182 @@
+<?php
+session_start();
+require_once __DIR__ . '/../db_connect.php';
+require_once __DIR__ . '/../settings_helper.php';
+
+if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'cafe owner') {
+    header('Location: ../signin.php');
+    exit;
+}
+
+$settings = get_system_settings($conn);
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'checkout') {
+    header('Content-Type: application/json');
+
+    $rawCart = json_decode($_POST['cart'] ?? '[]', true);
+    $paymentMethod = ($_POST['payment_method'] ?? 'cash') === 'ewallet' ? 'online' : 'cash';
+    $discountRate = !empty($_POST['discount']) ? (float)$settings['discount_rate'] : 0.0;
+
+    if (!is_array($rawCart) || count($rawCart) === 0) {
+        echo json_encode(['success' => false, 'error' => 'Cart is empty.']);
+        exit;
+    }
+
+    $quantities = [];
+    foreach ($rawCart as $line) {
+        $pid = (int)($line['id'] ?? 0);
+        $qty = (int)($line['qty'] ?? 0);
+        if ($pid <= 0 || $qty <= 0) {
+            echo json_encode(['success' => false, 'error' => 'Invalid cart item.']);
+            exit;
+        }
+        $quantities[$pid] = $qty;
+    }
+
+    $conn->begin_transaction();
+    try {
+        $ids = array_keys($quantities);
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $types = str_repeat('i', count($ids));
+        $stmt = $conn->prepare("SELECT product_id, product_name, product_selling_price, product_stocks FROM products WHERE product_id IN ($placeholders) FOR UPDATE");
+        $stmt->bind_param($types, ...$ids);
+        $stmt->execute();
+        $result = $stmt->get_result();
+        $productsById = [];
+        while ($row = $result->fetch_assoc()) {
+            $productsById[(int)$row['product_id']] = $row;
+        }
+        $stmt->close();
+
+        if (count($productsById) !== count($quantities)) {
+            throw new RuntimeException('One or more items are no longer available.');
+        }
+
+        $grossTotal = 0.0;
+        $lineItems = [];
+        foreach ($quantities as $pid => $qty) {
+            $product = $productsById[$pid];
+            if ((int)$product['product_stocks'] < $qty) {
+                throw new RuntimeException('Not enough stock for ' . $product['product_name'] . '.');
+            }
+            $unitPrice = (float)$product['product_selling_price'];
+            $subtotal = $unitPrice * $qty;
+            $grossTotal += $subtotal;
+            $lineItems[] = ['product_id' => $pid, 'quantity' => $qty, 'unit_price' => $unitPrice, 'subtotal' => $subtotal];
+        }
+
+        // Aggregate ingredient requirements across the whole cart from each product's recipe
+        $ingredientNeeds = [];
+        $recipeStmt = $conn->prepare('SELECT product_ingredients_id, quantity FROM product_ingredient_items WHERE product_id = ?');
+        foreach ($quantities as $pid => $qty) {
+            $recipeStmt->bind_param('i', $pid);
+            $recipeStmt->execute();
+            $recipeResult = $recipeStmt->get_result();
+            while ($recipeRow = $recipeResult->fetch_assoc()) {
+                $ingId = (int)$recipeRow['product_ingredients_id'];
+                $needed = (float)$recipeRow['quantity'] * $qty;
+                $ingredientNeeds[$ingId] = ($ingredientNeeds[$ingId] ?? 0) + $needed;
+            }
+        }
+        $recipeStmt->close();
+
+        if ($ingredientNeeds) {
+            $ingIds = array_keys($ingredientNeeds);
+            $ingPlaceholders = implode(',', array_fill(0, count($ingIds), '?'));
+            $ingTypes = str_repeat('i', count($ingIds));
+            $ingStmt = $conn->prepare("SELECT product_ingredients_id, ingredient_name, ingredient_stock FROM product_ingredients WHERE product_ingredients_id IN ($ingPlaceholders) FOR UPDATE");
+            $ingStmt->bind_param($ingTypes, ...$ingIds);
+            $ingStmt->execute();
+            $ingResult = $ingStmt->get_result();
+            $ingredientsById = [];
+            while ($row = $ingResult->fetch_assoc()) {
+                $ingredientsById[(int)$row['product_ingredients_id']] = $row;
+            }
+            $ingStmt->close();
+
+            foreach ($ingredientNeeds as $ingId => $needed) {
+                $ing = $ingredientsById[$ingId] ?? null;
+                if (!$ing || (float)$ing['ingredient_stock'] < $needed) {
+                    $ingName = $ing['ingredient_name'] ?? ('ingredient #' . $ingId);
+                    throw new RuntimeException('Not enough ' . $ingName . ' in stock to complete this sale.');
+                }
+            }
+        }
+
+        $discountAmount = round($grossTotal * $discountRate, 2);
+        $finalTotal = round($grossTotal - $discountAmount, 2);
+
+        $userId = (int)$_SESSION['user_id'];
+        $insertTxn = $conn->prepare("INSERT INTO transactions (user_id, transaction_date, transaction_total, transaction_status, payment_method, discount) VALUES (?, NOW(), ?, 'completed', ?, ?)");
+        $insertTxn->bind_param('idsd', $userId, $finalTotal, $paymentMethod, $discountAmount);
+        $insertTxn->execute();
+        $transactionId = $insertTxn->insert_id;
+        $insertTxn->close();
+
+        $insertItem = $conn->prepare('INSERT INTO transaction_items (transaction_id, product_id, quantity, unit_price, subtotal) VALUES (?, ?, ?, ?, ?)');
+        $updateStock = $conn->prepare('UPDATE products SET product_stocks = product_stocks - ? WHERE product_id = ?');
+        foreach ($lineItems as $item) {
+            $insertItem->bind_param('iiidd', $transactionId, $item['product_id'], $item['quantity'], $item['unit_price'], $item['subtotal']);
+            $insertItem->execute();
+
+            $updateStock->bind_param('ii', $item['quantity'], $item['product_id']);
+            $updateStock->execute();
+        }
+        $insertItem->close();
+        $updateStock->close();
+
+        if ($ingredientNeeds) {
+            $updateIngredient = $conn->prepare('UPDATE product_ingredients SET ingredient_stock = ingredient_stock - ? WHERE product_ingredients_id = ?');
+            foreach ($ingredientNeeds as $ingId => $needed) {
+                $updateIngredient->bind_param('di', $needed, $ingId);
+                $updateIngredient->execute();
+            }
+            $updateIngredient->close();
+        }
+
+        $conn->commit();
+
+        echo json_encode([
+            'success' => true,
+            'transaction_id' => $transactionId,
+            'total' => $finalTotal,
+            'discount' => $discountAmount,
+        ]);
+    } catch (Throwable $e) {
+        $conn->rollback();
+        echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+$displayName = $_SESSION['username'] ?? 'Owner';
+$initials = strtoupper(substr($displayName, 0, 2));
+
+$categories = [];
+$catResult = $conn->query('SELECT product_category_id, product_category FROM product_category ORDER BY product_category');
+while ($row = $catResult->fetch_assoc()) {
+    $categories[] = $row;
+}
+
+$products = [];
+$prodResult = $conn->query('
+    SELECT p.product_id, p.product_name, p.product_selling_price, p.product_stocks, p.product_category_id, pc.product_category, p.product_image
+    FROM products p
+    JOIN product_category pc ON pc.product_category_id = p.product_category_id
+    ORDER BY pc.product_category, p.product_name
+');
+while ($row = $prodResult->fetch_assoc()) {
+    $products[] = [
+        'id' => (int)$row['product_id'],
+        'name' => $row['product_name'],
+        'price' => (float)$row['product_selling_price'],
+        'stock' => (int)$row['product_stocks'],
+        'category_id' => (int)$row['product_category_id'],
+        'category_name' => $row['product_category'],
+        'image' => $row['product_image'] ? '../' . $row['product_image'] : null,
+    ];
+}
+?>
 <!DOCTYPE html>
 <html lang="en">
 
@@ -182,6 +361,27 @@
       font-size: 13px;
       color: var(--cream);
       font-weight: 500;
+    }
+
+    .logout-link {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(192, 57, 43, .12);
+      border: 1px solid rgba(192, 57, 43, .28);
+      color: #e08a80;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 99px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all .2s;
+    }
+
+    .logout-link:hover {
+      background: rgba(192, 57, 43, .22);
+      color: #e08a80;
     }
 
     /* ── SIDEBAR ── */
@@ -451,9 +651,18 @@
     }
 
     .product-icon {
-      font-size: 28px;
-      color: var(--mocha);
+      width: 100%;
+      height: 100px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       margin-bottom: 8px;
+    }
+
+    .product-icon img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
     }
 
     .product-name {
@@ -754,6 +963,110 @@
       accent-color: var(--gold);
     }
 
+    .cash-section {
+      margin: 20px 0;
+    }
+
+    .cash-input {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1.5px solid var(--cream-dark);
+      border-radius: var(--radius);
+      font-family: var(--font-mono);
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--charcoal);
+      outline: none;
+      transition: border-color .2s;
+    }
+
+    .cash-input:focus {
+      border-color: var(--gold);
+    }
+
+    .cash-input:disabled {
+      background: var(--cream-dark);
+      color: var(--charcoal-mid);
+      cursor: not-allowed;
+    }
+
+    .ewallet-qr-section {
+      margin: 20px 0;
+      text-align: center;
+      padding: 16px;
+      background: var(--cream-light);
+      border: 1.5px solid var(--cream-dark);
+      border-radius: var(--radius);
+    }
+
+    .ewallet-qr-section img {
+      max-width: 200px;
+      width: 100%;
+      border-radius: 8px;
+      border: 1.5px solid var(--cream-dark);
+    }
+
+    .ewallet-qr-empty {
+      font-size: 12px;
+      color: #999;
+      padding: 20px 10px;
+    }
+
+    .change-preview {
+      margin-top: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--sage);
+    }
+
+    .change-preview.negative {
+      color: var(--red-soft);
+    }
+
+    #toast-container {
+      position: fixed;
+      bottom: 22px;
+      right: 22px;
+      z-index: 99999;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+
+    .toast-msg {
+      background: var(--charcoal-mid);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 11px 16px;
+      border-radius: 10px;
+      box-shadow: var(--shadow-lg);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      animation: toastIn .28s ease;
+    }
+
+    .toast-msg.success {
+      border-left: 3px solid var(--sage);
+    }
+
+    .toast-msg.warn {
+      border-left: 3px solid var(--red-soft);
+    }
+
+    @keyframes toastIn {
+      from {
+        opacity: 0;
+        transform: translateY(14px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
     .modal-actions {
       display: flex;
       gap: 12px;
@@ -819,9 +1132,10 @@
     <div class="header-right">
       <div class="header-clock" id="clock"></div>
       <div class="header-user">
-        <div class="header-avatar">AJ</div>
-        <span class="header-user-name">Ana Reyes</span>
+        <div class="header-avatar"><?= htmlspecialchars($initials) ?></div>
+        <span class="header-user-name"><?= htmlspecialchars($displayName) ?></span>
       </div>
+      <a href="../logout.php" class="logout-link"><i class="fas fa-right-from-bracket"></i> Logout</a>
     </div>
   </header>
 
@@ -829,13 +1143,14 @@
     <div class="sidebar-section-label">Owner Panel</div>
     <a href="dashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
     <a href="transactions.php" class="nav-item active"><i class="fas fa-cash-register"></i> Transaction</a>
-    <a href="inventory.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Inventory</a>
+    <a href="products.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Products</a>
+    <a href="inventory.php" class="nav-item"><i class="fas fa-warehouse"></i> Inventory</a>
     <a href="reports.php" class="nav-item"><i class="fas fa-chart-bar"></i>Sales Report</a>
     <a href="users.php" class="nav-item"><i class="fas fa-users-gear"></i> User Management</a>
     <hr class="sidebar-divider" />
     <div class="sidebar-section-label">Settings</div>
-    <div class="nav-item" onclick="showToast('Settings — coming soon!','success')"><i class="fas fa-gear"></i> System
-      Settings</div>
+    <a href="settings.php" class="nav-item"><i class="fas fa-gear"></i> System
+      Settings</a>
     <div class="nav-item" onclick="showToast('Backup started!','success')"><i class="fas fa-database"></i> Data Backup
     </div>
     <div class="sidebar-footer">
@@ -864,11 +1179,12 @@
           </div>
           <div class="category-tabs">
             <div class="cat-tab active" data-cat="all">All</div>
-            <div class="cat-tab" data-cat="hot">Hot Drinks</div>
-            <div class="cat-tab" data-cat="iced">Iced Drinks</div>
-            <div class="cat-tab" data-cat="pastries">Pastries</div>
+            <?php foreach ($categories as $cat): ?>
+              <div class="cat-tab" data-cat="<?= (int)$cat['product_category_id'] ?>"><?= htmlspecialchars($cat['product_category']) ?></div>
+            <?php endforeach; ?>
           </div>
           <div class="products-grid" id="products-grid"></div>
+          <script id="products-data" type="application/json"><?= json_encode($products, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?></script>
         </section>
         <section class="cart-section">
           <div class="cart-card">
@@ -890,7 +1206,14 @@
         <div class="modal-box" style="max-width: 400px; border: 2px dashed var(--cream-dark);">
           <div style="text-align: center; margin-bottom: 20px;">
             <div class="pos-logo" style="margin: 0 auto 10px;"><i class="fas fa-mug-hot"></i></div>
-            <h2 class="modal-title" style="letter-spacing: 2px;">RECEIPT</h2>
+            <div style="font-family: var(--font-display); font-weight: 700; color: var(--mocha-deep); font-size: 15px;"><?= htmlspecialchars($settings['cafe_name']) ?></div>
+            <?php if ($settings['cafe_address'] !== ''): ?>
+              <div style="font-size: 11px; color: var(--charcoal-mid);"><?= htmlspecialchars($settings['cafe_address']) ?></div>
+            <?php endif; ?>
+            <?php if ($settings['cafe_contact'] !== ''): ?>
+              <div style="font-size: 11px; color: var(--charcoal-mid);"><?= htmlspecialchars($settings['cafe_contact']) ?></div>
+            <?php endif; ?>
+            <h2 class="modal-title" style="letter-spacing: 2px;margin-top:10px;">RECEIPT</h2>
             <p style="font-size: 12px; color: var(--charcoal-mid);" id="receipt-date"></p>
           </div>
 
@@ -899,8 +1222,10 @@
 
           <div
             style="margin-top: 24px; text-align: center; border-top: 2px dashed var(--cream-dark); padding-top: 20px;">
-            <p style="font-family: var(--font-display); font-weight: 700; color: var(--mocha);">Thank you for bean here!
-            </p>
+            <?php if ($settings['receipt_footer_message'] !== ''): ?>
+              <p style="font-family: var(--font-display); font-weight: 700; color: var(--mocha);"><?= htmlspecialchars($settings['receipt_footer_message']) ?>
+              </p>
+            <?php endif; ?>
             <button class="btn-confirm" style="margin-top: 15px; width: 100%;" onclick="closeReceiptModal()">Done & New
               Sale</button>
           </div>
@@ -938,8 +1263,25 @@
             </div>
             <div class="payment-option" data-payment="ewallet">
               <input type="radio" class="payment-radio" name="payment" value="ewallet">
-              <div><i class="fas fa-mobile-alt" style="font-size: 20px;"></i> E-Wallet</div>
+              <div><i class="fas fa-mobile-alt" style="font-size: 20px;"></i> E-Wallet (Gcash)</div>
             </div>
+          </div>
+          <div class="ewallet-qr-section" id="ewallet-qr-section" style="display:none;">
+            <h4
+              style="font-family: var(--font-display); font-size: 14px; color: var(--mocha-deep); margin-bottom: 10px;">
+              Scan to Pay via GCash</h4>
+            <?php if ($settings['ewallet_qr_image'] !== ''): ?>
+              <img src="../<?= htmlspecialchars($settings['ewallet_qr_image']) ?>" alt="GCash QR code">
+            <?php else: ?>
+              <div class="ewallet-qr-empty">No QR code has been uploaded yet. Add one in System Settings.</div>
+            <?php endif; ?>
+          </div>
+          <div class="cash-section">
+            <h4
+              style="font-family: var(--font-display); font-size: 16px; color: var(--mocha-deep); margin-bottom: 12px;">
+              Amount Tendered</h4>
+            <input type="number" id="amount-tendered-input" class="cash-input" min="0" step="0.01" placeholder="0.00">
+            <div id="change-preview" class="change-preview"></div>
           </div>
           <div class="modal-actions">
             <button class="btn-cancel" onclick="closeCheckoutModal()">Cancel</button>
@@ -947,21 +1289,13 @@
           </div>
         </div>
       </div>
+      <div id="toast-container"></div>
       <script>
-        // PRODUCTS
-        const products = [
-          { id: 1, name: 'Caramel Latte', price: 145, category: 'hot', icon: '☕' },
-          { id: 2, name: 'Hot Choco', price: 120, category: 'hot', icon: '☕' },
-          { id: 3, name: 'Espresso', price: 85, category: 'hot', icon: '☕' },
-          { id: 4, name: 'Iced Americano', price: 120, category: 'iced', icon: '🧊' },
-          { id: 5, name: 'Matcha Latte', price: 145, category: 'iced', icon: '🧊' },
-          { id: 6, name: 'Croissant', price: 85, category: 'pastries', icon: '🥐' },
-          { id: 7, name: 'Blueberry Muffin', price: 70, category: 'pastries', icon: '🧁' },
-          { id: 8, name: 'Cinnamon Roll', price: 90, category: 'pastries', icon: '🥖' }
-        ];
+        // PRODUCTS — loaded from the products table (see products-data script tag above)
+        const products = JSON.parse(document.getElementById('products-data').textContent);
         let cart = [];
-        const TAX_RATE = 0.12;
-        const DISCOUNT_RATE = 0.20;
+        const TAX_RATE = <?= (float)$settings['tax_rate'] ?>;
+        const DISCOUNT_RATE = <?= (float)$settings['discount_rate'] ?>;
         // DOM
         const productsGrid = document.getElementById('products-grid');
         const cartItems = document.getElementById('cart-items');
@@ -971,13 +1305,17 @@
         const clearCartBtn = document.getElementById('clear-cart');
         const checkoutModal = document.getElementById('checkout-modal');
         const clockEl = document.getElementById('clock');
+        const amountInput = document.getElementById('amount-tendered-input');
+        const changePreview = document.getElementById('change-preview');
+        let amountManuallyEdited = false;
+        let currentPaymentMethod = 'cash';
         document.addEventListener('DOMContentLoaded', () => {
           renderProducts();
           updateClock();
           setInterval(updateClock, 1000);
 
           document.querySelectorAll('.cat-tab').forEach(tab => {
-            tab.addEventListener('click', e => switchCategory(e.currentTarget.dataset.cat));
+            tab.addEventListener('click', e => switchCategory(e.currentTarget.dataset.cat, e.currentTarget));
           });
 
           clearCartBtn.addEventListener('click', clearCart);
@@ -985,29 +1323,49 @@
 
           // Modal interactions
           document.querySelectorAll('.discount-checkbox').forEach(cb => cb.addEventListener('change', updateCheckoutTotals));
-          document.querySelectorAll('.payment-option').forEach(opt => opt.addEventListener('click', e => selectPayment(e.currentTarget.dataset.payment)));
+          document.querySelectorAll('.payment-option').forEach(opt => opt.addEventListener('click', e => selectPayment(e.currentTarget.dataset.payment, e.currentTarget)));
+          amountInput.addEventListener('input', () => { amountManuallyEdited = true; updateChangePreview(); });
         });
         function renderProducts(category = 'all') {
-          productsGrid.innerHTML = products
-            .filter(p => category === 'all' || p.category === category)
-            .map(p => `<button class="product-btn" data-product-id="${p.id}">
-          <div class="product-icon">${p.icon}</div>
+          const filtered = products.filter(p => category === 'all' || String(p.category_id) === String(category));
+
+          if (products.length === 0) {
+            productsGrid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#aaa;padding:40px 20px;">No menu items yet. Add products from the Products page first.</div>';
+            return;
+          }
+          if (filtered.length === 0) {
+            productsGrid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#aaa;padding:40px 20px;">No items in this category.</div>';
+            return;
+          }
+
+          productsGrid.innerHTML = filtered.map(p => {
+            const outOfStock = p.stock <= 0;
+            return `<button class="product-btn" data-product-id="${p.id}" ${outOfStock ? 'disabled style="opacity:.5;cursor:not-allowed;"' : ''}>
+          <div class="product-icon">${p.image ? `<img src="${p.image}" alt="">` : ''}</div>
           <div class="product-name">${p.name}</div>
           <div class="product-price">₱${p.price.toLocaleString()}</div>
-        </button>`).join('');
+          <div style="font-size:11px;color:${outOfStock ? 'var(--red-soft)' : '#aaa'};margin-top:4px;">${outOfStock ? 'Out of stock' : p.stock + ' in stock'}</div>
+        </button>`;
+          }).join('');
 
           document.querySelectorAll('.product-btn').forEach(btn => {
-            btn.onclick = () => addToCart(parseInt(btn.dataset.productId));
+            if (!btn.disabled) btn.onclick = () => addToCart(parseInt(btn.dataset.productId));
           });
         }
-        function switchCategory(cat) {
+        function switchCategory(cat, el) {
           document.querySelectorAll('.cat-tab').forEach(t => t.classList.remove('active'));
-          event.target.classList.add('active');
+          el.classList.add('active');
           renderProducts(cat);
         }
         function addToCart(id) {
           const product = products.find(p => p.id === id);
+          if (!product || product.stock <= 0) return;
           const item = cart.find(i => i.id === id);
+          const currentQty = item ? item.qty : 0;
+          if (currentQty >= product.stock) {
+            showToast(`Only ${product.stock} unit(s) of ${product.name} available.`, 'warn');
+            return;
+          }
           if (item) item.qty++;
           else cart.push({ ...product, qty: 1 });
           renderCart();
@@ -1016,6 +1374,11 @@
         function updateQty(id, delta) {
           const item = cart.find(i => i.id === id);
           if (!item) return;
+          const product = products.find(p => p.id === id);
+          if (delta > 0 && product && item.qty >= product.stock) {
+            showToast(`Only ${product.stock} unit(s) of ${product.name} available.`, 'warn');
+            return;
+          }
           item.qty += delta;
           if (item.qty <= 0) cart = cart.filter(i => i.id !== id);
           renderCart();
@@ -1078,17 +1441,47 @@
           checkoutBtn.disabled = false;
         }
         function updateBadge() {
+          if (!cartBadge) return;
           const count = cart.reduce((sum, i) => sum + i.qty, 0);
           cartBadge.textContent = count;
         }
         function showCheckoutModal() {
           if (cart.length === 0) return;
+          amountManuallyEdited = false;
           checkoutModal.classList.add('show');
           renderOrderSummary();
           updateCheckoutTotals();
         }
         function closeCheckoutModal() {
           checkoutModal.classList.remove('show');
+        }
+        function computeFinalPayable() {
+          const totalOriginal = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
+          const hasDiscount = document.getElementById('pwd-discount').checked || document.getElementById('senior-discount').checked;
+          const discountAmount = hasDiscount ? totalOriginal * DISCOUNT_RATE : 0;
+          return totalOriginal - discountAmount;
+        }
+        function updateChangePreview() {
+          const finalPayable = computeFinalPayable();
+          const tendered = parseFloat(amountInput.value);
+          if (isNaN(tendered)) {
+            changePreview.textContent = '';
+            changePreview.classList.remove('negative');
+            return;
+          }
+          if (currentPaymentMethod === 'ewallet') {
+            changePreview.textContent = 'Exact amount charged via E-Wallet — no change due';
+            changePreview.classList.remove('negative');
+            return;
+          }
+          const change = tendered - finalPayable;
+          if (change < 0) {
+            changePreview.textContent = `Insufficient — need ₱${Math.abs(change).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} more`;
+            changePreview.classList.add('negative');
+          } else {
+            changePreview.textContent = `Change: ₱${change.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+            changePreview.classList.remove('negative');
+          }
         }
         function renderOrderSummary() {
           document.getElementById('order-items').innerHTML = cart.map(item => {
@@ -1134,29 +1527,72 @@
       <span style="font-family: var(--font-mono); font-size: 24px; font-weight: 800; color: var(--gold);">₱${finalPayable.toLocaleString()}</span>
     </div>
   `;
+          if (currentPaymentMethod === 'ewallet') {
+            amountInput.value = finalPayable.toFixed(2);
+            amountInput.disabled = true;
+          } else {
+            amountInput.disabled = false;
+            if (!amountManuallyEdited) amountInput.value = finalPayable.toFixed(2);
+          }
+          updateChangePreview();
         }
-        function selectPayment(method) {
+        function selectPayment(method, el) {
           document.querySelectorAll('.payment-option').forEach(opt => opt.classList.remove('active'));
-          event.currentTarget.classList.add('active');
+          el.classList.add('active');
+          currentPaymentMethod = method;
+          document.getElementById('ewallet-qr-section').style.display = method === 'ewallet' ? 'block' : 'none';
+          updateCheckoutTotals();
         }
-        function confirmCheckout() {
+        async function confirmCheckout() {
           const totalOriginal = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
           const hasDiscount = document.getElementById('pwd-discount').checked || document.getElementById('senior-discount').checked;
           const discountVal = hasDiscount ? totalOriginal * DISCOUNT_RATE : 0;
           const finalPayable = totalOriginal - discountVal;
           const paymentMethod = document.querySelector('.payment-option.active').dataset.payment;
 
-          // 1. Get Payment
-          let amountTendered = prompt(`Total: ₱${finalPayable.toLocaleString()}\nEnter cash amount:`, finalPayable);
-          if (amountTendered === null) return;
-          amountTendered = parseFloat(amountTendered);
+          // 1. Read the amount tendered from the in-page field
+          const amountTendered = parseFloat(amountInput.value);
 
           if (isNaN(amountTendered) || amountTendered < finalPayable) {
-            alert("❌ Insufficient amount.");
+            showToast('Insufficient amount entered.', 'warn');
+            amountInput.focus();
             return;
           }
 
           const change = amountTendered - finalPayable;
+
+          // 1b. Persist the sale to the database
+          const confirmBtn = document.querySelector('#checkout-modal .btn-confirm');
+          confirmBtn.disabled = true;
+          confirmBtn.textContent = 'Processing…';
+
+          let serverResult;
+          try {
+            const response = await fetch('transactions.php', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({
+                action: 'checkout',
+                cart: JSON.stringify(cart.map(i => ({ id: i.id, qty: i.qty }))),
+                payment_method: paymentMethod,
+                discount: hasDiscount ? '1' : ''
+              })
+            });
+            serverResult = await response.json();
+          } catch (err) {
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = 'Complete Sale';
+            showToast('Could not reach the server. Please try again.', 'warn');
+            return;
+          }
+
+          confirmBtn.disabled = false;
+          confirmBtn.textContent = 'Complete Sale';
+
+          if (!serverResult || !serverResult.success) {
+            showToast(serverResult && serverResult.error ? serverResult.error : 'Transaction failed.', 'warn');
+            return;
+          }
 
           // 2. Build Receipt UI
           document.getElementById('receipt-date').textContent = new Date().toLocaleString();
@@ -1169,6 +1605,7 @@
   `).join('');
 
           document.getElementById('receipt-content').innerHTML = `
+    <div style="text-align:center;font-size:11px;color:#999;margin-bottom:10px;">Transaction #${serverResult.transaction_id}</div>
     <div style="border-bottom: 1px solid var(--cream-dark); padding-bottom: 10px; margin-bottom: 10px;">
       ${itemsHtml}
     </div>
@@ -1203,15 +1640,21 @@
           document.getElementById('receipt-modal').classList.add('show');
         }
 
-        // Helper to close receipt and clear cart
+        // Reload so the product list reflects the stock the sale just consumed
         function closeReceiptModal() {
-          document.getElementById('receipt-modal').classList.remove('show');
-          clearCart();
-          document.getElementById('pwd-discount').checked = false;
-          document.getElementById('senior-discount').checked = false;
+          location.reload();
         }
         function updateClock() {
           clockEl.textContent = new Date().toLocaleTimeString('en-PH', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }
+        function showToast(msg, type = 'success') {
+          const c = document.getElementById('toast-container');
+          if (!c) return;
+          const t = document.createElement('div');
+          t.className = `toast-msg ${type}`;
+          t.innerHTML = `<i class="fas ${type === 'success' ? 'fa-circle-check' : 'fa-triangle-exclamation'}"></i> ${msg}`;
+          c.appendChild(t);
+          setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, 2800);
         }
       </script>
 </body>

@@ -1,3 +1,101 @@
+<?php
+session_start();
+require_once __DIR__ . '/../db_connect.php';
+require_once __DIR__ . '/../settings_helper.php';
+
+if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'cafe owner') {
+    header('Location: ../signin.php');
+    exit;
+}
+
+$displayName = $_SESSION['username'] ?? 'Owner';
+$initials = strtoupper(substr($displayName, 0, 2));
+
+$settings = get_system_settings($conn);
+$criticalStockThreshold = (int)$settings['critical_stock_threshold'];
+$lowStockThreshold = (int)$settings['low_stock_threshold'];
+
+$stmt = $conn->prepare("SELECT COALESCE(SUM(transaction_total),0) AS total FROM transactions WHERE transaction_status = 'completed' AND DATE(transaction_date) = CURDATE()");
+$stmt->execute();
+$todayRevenue = (float)$stmt->get_result()->fetch_assoc()['total'];
+$stmt->close();
+
+$stmt = $conn->prepare("SELECT COALESCE(SUM(transaction_total),0) AS total FROM transactions WHERE transaction_status = 'completed' AND DATE(transaction_date) = CURDATE() - INTERVAL 1 DAY");
+$stmt->execute();
+$yesterdayRevenue = (float)$stmt->get_result()->fetch_assoc()['total'];
+$stmt->close();
+
+$revenueChangePct = $yesterdayRevenue > 0 ? (($todayRevenue - $yesterdayRevenue) / $yesterdayRevenue) * 100 : null;
+
+$stmt = $conn->prepare("SELECT COUNT(*) AS cnt FROM transactions WHERE DATE(transaction_date) = CURDATE()");
+$stmt->execute();
+$todayTxnCount = (int)$stmt->get_result()->fetch_assoc()['cnt'];
+$stmt->close();
+
+$stmt = $conn->prepare("SELECT COUNT(*) AS cnt FROM transactions WHERE DATE(transaction_date) = CURDATE() - INTERVAL 1 DAY");
+$stmt->execute();
+$yesterdayTxnCount = (int)$stmt->get_result()->fetch_assoc()['cnt'];
+$stmt->close();
+
+$txnCountChange = $todayTxnCount - $yesterdayTxnCount;
+$avgTxnValue = $todayTxnCount > 0 ? $todayRevenue / $todayTxnCount : 0;
+
+$stmt = $conn->prepare('SELECT COUNT(*) AS cnt FROM products WHERE product_stocks <= ?');
+$stmt->bind_param('i', $criticalStockThreshold);
+$stmt->execute();
+$criticalStockCount = (int)$stmt->get_result()->fetch_assoc()['cnt'];
+$stmt->close();
+
+$stmt = $conn->prepare("
+    SELECT p.product_name, SUM(ti.quantity) AS units
+    FROM transaction_items ti
+    JOIN transactions t ON t.transaction_id = ti.transaction_id
+    JOIN products p ON p.product_id = ti.product_id
+    WHERE t.transaction_status = 'completed' AND DATE(t.transaction_date) = CURDATE()
+    GROUP BY ti.product_id, p.product_name
+    ORDER BY units DESC
+    LIMIT 1
+");
+$stmt->execute();
+$bestSeller = $stmt->get_result()->fetch_assoc();
+$stmt->close();
+
+$recentTransactions = [];
+$stmt = $conn->prepare("
+    SELECT t.transaction_id, t.transaction_total, t.payment_method, t.transaction_status, u.username,
+           GROUP_CONCAT(CONCAT(ti.quantity, '\xc3\x97', p.product_name) SEPARATOR ', ') AS items_summary
+    FROM transactions t
+    JOIN users u ON u.user_id = t.user_id
+    LEFT JOIN transaction_items ti ON ti.transaction_id = t.transaction_id
+    LEFT JOIN products p ON p.product_id = ti.product_id
+    GROUP BY t.transaction_id, t.transaction_total, t.payment_method, t.transaction_status, u.username
+    ORDER BY t.transaction_date DESC
+    LIMIT 5
+");
+$stmt->execute();
+$result = $stmt->get_result();
+while ($row = $result->fetch_assoc()) {
+    $recentTransactions[] = $row;
+}
+$stmt->close();
+
+$stockAlerts = [];
+$stmt = $conn->prepare('
+    SELECT p.product_name, p.product_stocks, s.supplier_name, s.supplier_contact
+    FROM products p
+    LEFT JOIN product_supplier s ON s.product_supplier_id = p.product_supplier_id
+    WHERE p.product_stocks <= ?
+    ORDER BY p.product_stocks ASC
+    LIMIT 5
+');
+$stmt->bind_param('i', $lowStockThreshold);
+$stmt->execute();
+$result = $stmt->get_result();
+while ($row = $result->fetch_assoc()) {
+    $stockAlerts[] = $row;
+}
+$stmt->close();
+?>
 <!DOCTYPE html>
 <html lang="en">
 
@@ -10,7 +108,6 @@
     href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap"
     rel="stylesheet" />
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet" />
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <style>
     /* Paste ALL your original CSS here. I've included it all below for the first file. */
     :root {
@@ -205,6 +302,27 @@
       font-size: 13px;
       color: var(--cream);
       font-weight: 500;
+    }
+
+    .logout-link {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(192, 57, 43, .12);
+      border: 1px solid rgba(192, 57, 43, .28);
+      color: #e08a80;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 99px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all .2s;
+    }
+
+    .logout-link:hover {
+      background: rgba(192, 57, 43, .22);
+      color: #e08a80;
     }
 
     /* ── SIDEBAR ── */
@@ -1050,9 +1168,10 @@
       <div class="header-clock" id="clock"></div>
       
       <div class="header-user">
-        <div class="header-avatar">AJ</div>
-        <span class="header-user-name">Ana Reyes</span>
+        <div class="header-avatar"><?= htmlspecialchars($initials) ?></div>
+        <span class="header-user-name"><?= htmlspecialchars($displayName) ?></span>
       </div>
+      <a href="../logout.php" class="logout-link"><i class="fas fa-right-from-bracket"></i> Logout</a>
     </div>
   </header>
 
@@ -1060,14 +1179,18 @@
     <div class="sidebar-section-label">Owner Panel</div>
     <a href="dashboard.php" class="nav-item active"><i class="fas fa-chart-line"></i> Dashboard</a>
     <a href="transactions.php" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
-    <a href="inventory.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Inventory <span
-        class="nav-badge">3</span></a>
+    <a href="products.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Products
+      <?php if ($criticalStockCount > 0): ?>
+        <span class="nav-badge"><?= $criticalStockCount ?></span>
+      <?php endif; ?>
+    </a>
+    <a href="inventory.php" class="nav-item"><i class="fas fa-warehouse"></i> Inventory</a>
     <a href="reports.php" class="nav-item"><i class="fas fa-chart-bar"></i> Sales Report</a>
     <a href="users.php" class="nav-item"><i class="fas fa-users-gear"></i> User Management</a>
     <hr class="sidebar-divider" />
     <div class="sidebar-section-label">Settings</div>
-    <div class="nav-item" onclick="showToast('Settings — coming soon!','success')"><i class="fas fa-gear"></i> System
-      Settings</div>
+    <a href="settings.php" class="nav-item"><i class="fas fa-gear"></i> System
+      Settings</a>
     <div class="nav-item" onclick="showToast('Backup started!','success')"><i class="fas fa-database"></i> Data Backup
     </div>
     <div class="sidebar-footer">
@@ -1081,7 +1204,7 @@
         <h1><i class="fas fa-chart-line" style="color:var(--gold);font-size:18px;margin-right:8px;"></i>Dashboard</h1>
         <div class="sub" id="dash-date">Overview — Loading…</div>
       </div>
-      <button class="btn-primary" onclick="showToast('Data refreshed!','success')">
+      <button class="btn-primary" onclick="location.reload()">
         <i class="fas fa-arrows-rotate"></i> Refresh
       </button>
     </div>
@@ -1091,30 +1214,49 @@
         <div class="kpi-card" style="--accent:var(--gold);--accent-bg:rgba(201,148,58,.10);">
           <div class="kpi-icon"><i class="fas fa-peso-sign"></i></div>
           <div class="kpi-label">Daily Revenue</div>
-          <div class="kpi-value">₱4,820</div>
-          <div class="kpi-sub">Target: ₱5,000 · 96.4%</div>
-          <div class="kpi-trend up"><i class="fas fa-arrow-trend-up"></i> +12.4% vs yesterday</div>
+          <div class="kpi-value">₱<?= number_format($todayRevenue, 2) ?></div>
+          <div class="kpi-sub">From <?= $todayTxnCount ?> completed transaction<?= $todayTxnCount === 1 ? '' : 's' ?> today</div>
+          <?php if ($revenueChangePct === null): ?>
+            <div class="kpi-trend"><i class="fas fa-minus"></i> No sales recorded yesterday</div>
+          <?php else: ?>
+            <div class="kpi-trend <?= $revenueChangePct >= 0 ? 'up' : 'warn' ?>">
+              <i class="fas <?= $revenueChangePct >= 0 ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down' ?>"></i>
+              <?= ($revenueChangePct >= 0 ? '+' : '') . number_format($revenueChangePct, 1) ?>% vs yesterday
+            </div>
+          <?php endif; ?>
         </div>
         <div class="kpi-card" style="--accent:var(--sage);--accent-bg:rgba(122,158,126,.10);">
           <div class="kpi-icon"><i class="fas fa-receipt"></i></div>
           <div class="kpi-label">Total Transactions</div>
-          <div class="kpi-value">67</div>
-          <div class="kpi-sub">Avg. ₱71.94 per transaction</div>
-          <div class="kpi-trend up"><i class="fas fa-arrow-trend-up"></i> +8 vs yesterday</div>
+          <div class="kpi-value"><?= $todayTxnCount ?></div>
+          <div class="kpi-sub">Avg. ₱<?= number_format($avgTxnValue, 2) ?> per transaction</div>
+          <div class="kpi-trend <?= $txnCountChange >= 0 ? 'up' : 'warn' ?>">
+            <i class="fas <?= $txnCountChange >= 0 ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down' ?>"></i>
+            <?= ($txnCountChange >= 0 ? '+' : '') . $txnCountChange ?> vs yesterday
+          </div>
         </div>
         <div class="kpi-card" style="--accent:#e67e22;--accent-bg:rgba(230,126,34,.10);">
           <div class="kpi-icon"><i class="fas fa-triangle-exclamation"></i></div>
           <div class="kpi-label">Critical Stock</div>
-          <div class="kpi-value">3</div>
-          <div class="kpi-sub">Items below minimum level</div>
-          <div class="kpi-trend warn"><i class="fas fa-circle-exclamation"></i> Action required</div>
+          <div class="kpi-value"><?= $criticalStockCount ?></div>
+          <div class="kpi-sub">Products at or below <?= $criticalStockThreshold ?> units</div>
+          <?php if ($criticalStockCount > 0): ?>
+            <div class="kpi-trend warn"><i class="fas fa-circle-exclamation"></i> Action required</div>
+          <?php else: ?>
+            <div class="kpi-trend up"><i class="fas fa-circle-check"></i> Stock levels healthy</div>
+          <?php endif; ?>
         </div>
         <div class="kpi-card" style="--accent:#2980b9;--accent-bg:rgba(41,128,185,.10);">
           <div class="kpi-icon"><i class="fas fa-fire"></i></div>
           <div class="kpi-label">Best Seller Today</div>
-          <div class="kpi-value" style="font-size:18px;line-height:1.2;margin-top:3px;">Caramel Latte</div>
-          <div class="kpi-sub">28 units sold today</div>
-          <div class="kpi-trend up"><i class="fas fa-crown"></i> #1 this week</div>
+          <?php if ($bestSeller): ?>
+            <div class="kpi-value" style="font-size:18px;line-height:1.2;margin-top:3px;"><?= htmlspecialchars($bestSeller['product_name']) ?></div>
+            <div class="kpi-sub"><?= (int)$bestSeller['units'] ?> unit<?= (int)$bestSeller['units'] === 1 ? '' : 's' ?> sold today</div>
+            <div class="kpi-trend up"><i class="fas fa-crown"></i> Top seller today</div>
+          <?php else: ?>
+            <div class="kpi-value" style="font-size:18px;line-height:1.2;margin-top:3px;">—</div>
+            <div class="kpi-sub">No sales recorded yet today</div>
+          <?php endif; ?>
         </div>
       </div>
 
@@ -1133,88 +1275,61 @@
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td class="text-mono">#1042</td>
-                <td>2× Caramel Latte</td>
-                <td class="text-mono text-gold">₱230</td>
-                <td>QR</td>
-                <td>Mark</td>
-                <td><span class="status-pill pill-success">Confirmed</span></td>
-              </tr>
-              <tr>
-                <td class="text-mono">#1041</td>
-                <td>Iced Americano + Croissant</td>
-                <td class="text-mono text-gold">₱195</td>
-                <td>Cash</td>
-                <td>Cris</td>
-                <td><span class="status-pill pill-success">Paid</span></td>
-              </tr>
-              <tr>
-                <td class="text-mono">#1040</td>
-                <td>3× Hot Choco</td>
-                <td class="text-mono text-gold">₱360</td>
-                <td>Cash</td>
-                <td>Mark</td>
-                <td><span class="status-pill pill-success">Paid</span></td>
-              </tr>
-              <tr>
-                <td class="text-mono">#1039</td>
-                <td>Matcha Latte</td>
-                <td class="text-mono text-gold">₱145</td>
-                <td>QR</td>
-                <td>Cris</td>
-                <td><span class="status-pill pill-warn">Pending</span></td>
-              </tr>
-              <tr>
-                <td class="text-mono">#1038</td>
-                <td>Espresso + Blueberry Muffin</td>
-                <td class="text-mono text-gold">₱175</td>
-                <td>Cash</td>
-                <td>Mark</td>
-                <td><span class="status-pill pill-success">Paid</span></td>
-              </tr>
+              <?php if (empty($recentTransactions)): ?>
+                <tr>
+                  <td colspan="6" style="text-align:center;color:#aaa;padding:16px 8px;">No transactions recorded yet.</td>
+                </tr>
+              <?php else: ?>
+                <?php foreach ($recentTransactions as $tx): ?>
+                  <?php
+                    $statusLabel = $tx['transaction_status'] === 'completed' ? 'Completed' : 'Cancelled';
+                    $statusPillClass = $tx['transaction_status'] === 'completed' ? 'pill-success' : 'pill-red';
+                    $methodLabel = $tx['payment_method'] === 'online' ? 'Online' : 'Cash';
+                  ?>
+                  <tr>
+                    <td class="text-mono">#<?= (int)$tx['transaction_id'] ?></td>
+                    <td><?= htmlspecialchars($tx['items_summary'] ?? '—') ?></td>
+                    <td class="text-mono text-gold">₱<?= number_format((float)$tx['transaction_total'], 2) ?></td>
+                    <td><?= $methodLabel ?></td>
+                    <td><?= htmlspecialchars($tx['username']) ?></td>
+                    <td><span class="status-pill <?= $statusPillClass ?>"><?= $statusLabel ?></span></td>
+                  </tr>
+                <?php endforeach; ?>
+              <?php endif; ?>
             </tbody>
           </table>
         </div>
         <div class="dash-card">
           <div class="dash-card-title"><i class="fas fa-boxes-stacked"></i>Stock Alerts</div>
           <div style="display:flex;flex-direction:column;gap:10px;">
-            <div
-              style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:rgba(192,57,43,.05);border-radius:8px;border-left:3px solid var(--red-soft);">
-              <div>
-                <div style="font-size:13px;font-weight:600;">Soy Milk (1L)</div>
-                <div style="font-size:11px;color:#aaa;">Magnolia Foods · 0918-345-6789</div>
-              </div>
-              <div style="text-align:right;">
-                <div style="font-size:18px;font-weight:700;color:var(--red-soft);">2</div>
-                <div style="font-size:10px;color:#aaa;">units left</div>
-              </div>
-            </div>
-            <div
-              style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:rgba(230,126,34,.05);border-radius:8px;border-left:3px solid #e67e22;">
-              <div>
-                <div style="font-size:13px;font-weight:600;">Whipped Cream</div>
-                <div style="font-size:11px;color:#aaa;">Alaska Dairy · 0921-678-9012</div>
-              </div>
-              <div style="text-align:right;">
-                <div style="font-size:18px;font-weight:700;color:#e67e22;">5</div>
-                <div style="font-size:10px;color:#aaa;">units left</div>
-              </div>
-            </div>
-            <div
-              style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:rgba(230,126,34,.05);border-radius:8px;border-left:3px solid #e67e22;">
-              <div>
-                <div style="font-size:13px;font-weight:600;">Blueberry Muffin</div>
-                <div style="font-size:11px;color:#aaa;">La Farine Bakery · 0922-789-0123</div>
-              </div>
-              <div style="text-align:right;">
-                <div style="font-size:18px;font-weight:700;color:#e67e22;">4</div>
-                <div style="font-size:10px;color:#aaa;">units left</div>
-              </div>
-            </div>
+            <?php if (empty($stockAlerts)): ?>
+              <div style="padding:14px 12px;text-align:center;color:#aaa;font-size:13px;">All stock levels are healthy.</div>
+            <?php else: ?>
+              <?php foreach ($stockAlerts as $item): ?>
+                <?php
+                  $isCritical = (int)$item['product_stocks'] <= $criticalStockThreshold;
+                  $barColor = $isCritical ? 'var(--red-soft)' : '#e67e22';
+                  $barBg = $isCritical ? 'rgba(192,57,43,.05)' : 'rgba(230,126,34,.05)';
+                  $supplierLine = $item['supplier_name']
+                    ? htmlspecialchars($item['supplier_name']) . ($item['supplier_contact'] ? ' · ' . htmlspecialchars($item['supplier_contact']) : '')
+                    : 'No supplier on file';
+                ?>
+                <div
+                  style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:<?= $barBg ?>;border-radius:8px;border-left:3px solid <?= $barColor ?>;">
+                  <div>
+                    <div style="font-size:13px;font-weight:600;"><?= htmlspecialchars($item['product_name']) ?></div>
+                    <div style="font-size:11px;color:#aaa;"><?= $supplierLine ?></div>
+                  </div>
+                  <div style="text-align:right;">
+                    <div style="font-size:18px;font-weight:700;color:<?= $barColor ?>;"><?= (int)$item['product_stocks'] ?></div>
+                    <div style="font-size:10px;color:#aaa;">units left</div>
+                  </div>
+                </div>
+              <?php endforeach; ?>
+            <?php endif; ?>
             <button class="btn-primary" style="width:100%;justify-content:center;margin-top:4px;"
-              onclick="location.href='inventory.php'">
-              <i class="fas fa-arrow-right"></i> Manage Inventory
+              onclick="location.href='products.php'">
+              <i class="fas fa-arrow-right"></i> Manage Products
             </button>
           </div>
         </div>
@@ -1225,133 +1340,16 @@
   <div id="toast-container"></div>
 
   <script>
-    /* Paste ALL your original JS here. The ONLY change is the safety checks inside DOMContentLoaded so it works on pages without charts/tables */
-    const inventory = [
-      { name: 'Espresso Beans (1kg)', cat: 'Supplies', stock: 15, cost: '₱850', price: '—', supplier: 'Benguet Coffee Co.', contact: '0917-234-5678', level: 'ok' },
-      { name: 'Soy Milk (1L)', cat: 'Supplies', stock: 2, cost: '₱65', price: '—', supplier: 'Magnolia Foods', contact: '0918-345-6789', level: 'crit' },
-      { name: 'Matcha Powder (250g)', cat: 'Supplies', stock: 8, cost: '₱420', price: '—', supplier: 'Nishio Tea PH', contact: '0919-456-7890', level: 'ok' },
-      { name: 'Caramel Syrup (750ml)', cat: 'Supplies', stock: 10, cost: '₱195', price: '—', supplier: 'Monin Philippines', contact: '0920-567-8901', level: 'ok' },
-      { name: 'Whipped Cream', cat: 'Supplies', stock: 5, cost: '₱120', price: '—', supplier: 'Alaska Dairy', contact: '0921-678-9012', level: 'low' },
-      { name: 'Caramel Latte', cat: 'Hot', stock: 28, cost: '₱72', price: '₱145', supplier: '(In-house)', contact: '—', level: 'ok' },
-      { name: 'Iced Americano', cat: 'Iced', stock: 35, cost: '₱48', price: '₱120', supplier: '(In-house)', contact: '—', level: 'ok' },
-      { name: 'Croissant', cat: 'Pastries', stock: 20, cost: '₱35', price: '₱85', supplier: 'La Farine Bakery', contact: '0922-789-0123', level: 'ok' },
-      { name: 'Blueberry Muffin', cat: 'Pastries', stock: 4, cost: '₱30', price: '₱70', supplier: 'La Farine Bakery', contact: '0922-789-0123', level: 'low' },
-      { name: 'Cinnamon Roll', cat: 'Pastries', stock: 8, cost: '₱38', price: '₱90', supplier: 'La Farine Bakery', contact: '0922-789-0123', level: 'ok' },
-      { name: 'Banana Bread', cat: 'Pastries', stock: 6, cost: '₱32', price: '₱75', supplier: 'La Farine Bakery', contact: '0922-789-0123', level: 'ok' },
-    ];
-
-    const chartData = {
-      weekly: { labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], revenue: [3200, 4100, 3800, 4820, 5100, 6200, 5800], txn: [45, 58, 50, 67, 72, 89, 81], sub: 'Weekly sales breakdown (Mon–Sun)', rev: '₱33,740', txnT: '469', avg: '₱4,820' },
-      monthly: { labels: ['Week 1', 'Week 2', 'Week 3', 'Week 4'], revenue: [24800, 31200, 28900, 36400], txn: [346, 435, 403, 508], sub: 'Monthly sales breakdown by week', rev: '₱121,300', txnT: '1,692', avg: '₱4,332' },
-      yearly: { labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'], revenue: [98000, 87000, 112000, 105000, 118000, 132000, 145000, 138000, 151000, 142000, 165000, 182000], txn: [1360, 1210, 1556, 1460, 1639, 1832, 2016, 1917, 2097, 1972, 2292, 2530], sub: 'Yearly sales breakdown by month', rev: '₱1,575,000', txnT: '21,881', avg: '₱4,315' }
-    };
-
-    let salesChart = null, catChart = null, currentPeriod = 'weekly';
-
     document.addEventListener('DOMContentLoaded', () => {
       updateClock(); setInterval(updateClock, 1000);
 
-      // Safety checks added so scripts only run if elements exist on the current page
       const dashDate = document.getElementById('dash-date');
       if (dashDate) dashDate.textContent = 'Overview — ' + new Date().toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-
-      const invBody = document.getElementById('inv-tbody');
-      if (invBody) renderInventory('', '', '');
-
-      const sc = document.getElementById('salesChart');
-      if (sc) setTimeout(initCharts, 150);
     });
 
     function updateClock() {
       const clock = document.getElementById('clock');
       if (clock) clock.textContent = new Date().toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    }
-
-    function renderInventory(search, cat, level) {
-      const tbody = document.getElementById('inv-tbody');
-      if (!tbody) return;
-      const filtered = inventory.filter(i => {
-        const s = !search || i.name.toLowerCase().includes(search.toLowerCase()) || i.supplier.toLowerCase().includes(search.toLowerCase());
-        const c = !cat || i.cat === cat;
-        const l = !level || i.level === level;
-        return s && c && l;
-      });
-      tbody.innerHTML = filtered.map(i => `
-    <tr>
-      <td style="font-weight:600;">${i.name}</td>
-      <td><span class="tag ${i.cat === 'Hot' ? 'tag-hot' : i.cat === 'Iced' ? 'tag-iced' : i.cat === 'Pastries' ? 'tag-pastry' : 'tag-supply'}">${i.cat}</span></td>
-      <td><div class="stock-indicator stock-${i.level}"><div class="stock-dot"></div>${i.stock}</div></td>
-      <td class="text-mono">${i.cost}</td>
-      <td class="text-mono">${i.price}</td>
-      <td>${i.supplier}</td>
-      <td class="text-mono" style="font-size:12px;">${i.contact}</td>
-      <td style="display:flex;gap:6px;">
-        <button class="tbl-btn tbl-btn-edit" onclick="showToast('Edit item — open form','success')">Edit</button>
-        <button class="tbl-btn tbl-btn-del"  onclick="showToast('Delete item?','warn')">Delete</button>
-      </td>
-    </tr>
-  `).join('');
-    }
-
-    function filterInventory() {
-      renderInventory(
-        document.getElementById('inv-search').value,
-        document.getElementById('inv-cat-filter').value,
-        document.getElementById('inv-stock-filter').value
-      );
-    }
-
-    function filterUsers(q) {
-      const rows = document.querySelectorAll('#user-tbody tr');
-      rows.forEach(r => r.style.display = r.textContent.toLowerCase().includes(q.toLowerCase()) ? '' : 'none');
-    }
-
-    function initCharts() {
-      const sc = document.getElementById('salesChart');
-      const cc = document.getElementById('catChart');
-      if (!sc || !cc) return;
-      if (salesChart) salesChart.destroy();
-      if (catChart) catChart.destroy();
-      const d = chartData[currentPeriod];
-      salesChart = new Chart(sc, {
-        type: 'bar',
-        data: {
-          labels: d.labels,
-          datasets: [
-            { label: 'Revenue (₱)', data: d.revenue, backgroundColor: '#C9943Acc', borderColor: '#C9943A', borderWidth: 2, borderRadius: 6, yAxisID: 'y' },
-            { label: 'Transactions', data: d.txn, type: 'line', borderColor: '#4A2C2A', backgroundColor: '#4A2C2A22', tension: .4, pointBackgroundColor: '#4A2C2A', pointRadius: 4, yAxisID: 'y1' }
-          ]
-        },
-        options: {
-          responsive: true, interaction: { mode: 'index', intersect: false },
-          plugins: { legend: { labels: { font: { family: "'DM Sans',sans-serif", size: 11 }, color: '#666' } } },
-          scales: {
-            y: { grid: { color: 'rgba(0,0,0,.05)' }, ticks: { color: '#999', font: { size: 10 }, callback: v => '₱' + v.toLocaleString() } },
-            y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#999', font: { size: 10 } } },
-            x: { grid: { display: false }, ticks: { color: '#999', font: { size: 11 } } }
-          }
-        }
-      });
-      catChart = new Chart(cc, {
-        type: 'doughnut',
-        data: {
-          labels: ['Hot Drinks', 'Iced Drinks', 'Pastries'],
-          datasets: [{ data: [48, 32, 20], backgroundColor: ['#4A2C2A', '#C9943A', '#7A9E7E'], borderWidth: 0, hoverOffset: 8 }]
-        },
-        options: { responsive: true, cutout: '68%', plugins: { legend: { position: 'bottom', labels: { font: { family: "'DM Sans',sans-serif", size: 12 }, color: '#666', padding: 16 } } } }
-      });
-    }
-
-    function switchPeriod(p, el) {
-      currentPeriod = p;
-      document.querySelectorAll('.period-tab').forEach(t => t.classList.remove('active'));
-      el.classList.add('active');
-      const d = chartData[p];
-      document.getElementById('chart-sublabel').textContent = d.sub;
-      document.getElementById('rpt-rev').textContent = d.rev;
-      document.getElementById('rpt-txn').textContent = d.txnT;
-      document.getElementById('rpt-avg').textContent = d.avg;
-      initCharts();
     }
 
     function openModal(id) { document.getElementById(id).classList.add('show'); }

@@ -1,3 +1,315 @@
+<?php
+session_start();
+require_once __DIR__ . '/../db_connect.php';
+
+if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'cafe staff') {
+    header('Location: ../signin.php');
+    exit;
+}
+
+function staff_report_category_tag_class(string $name): string
+{
+    $n = strtolower($name);
+    if (str_contains($n, 'hot')) return 'tag-hot';
+    if (str_contains($n, 'iced') || str_contains($n, 'cold')) return 'tag-iced';
+    if (str_contains($n, 'pastr') || str_contains($n, 'bread') || str_contains($n, 'bake')) return 'tag-pastry';
+    return 'tag-supply';
+}
+
+function staff_report_buckets(string $granularity, string $dateFrom, string $dateTill): array
+{
+    $buckets = [];
+
+    if ($granularity === 'hour') {
+        for ($h = 0; $h < 24; $h++) {
+            $buckets[str_pad((string)$h, 2, '0', STR_PAD_LEFT)] = date('g A', mktime($h, 0, 0));
+        }
+        return $buckets;
+    }
+
+    $start = new DateTime($dateFrom);
+    $end = new DateTime($dateTill);
+    if ($end < $start) {
+        $end = clone $start;
+    }
+
+    if ($granularity === 'month') {
+        $cursor = new DateTime($start->format('Y-m-01'));
+        $endMonth = new DateTime($end->format('Y-m-01'));
+        $guard = 0;
+        while ($cursor <= $endMonth && $guard < 120) {
+            $buckets[$cursor->format('Y-m')] = $cursor->format('M Y');
+            $cursor->modify('+1 month');
+            $guard++;
+        }
+        return $buckets;
+    }
+
+    $cursor = clone $start;
+    $guard = 0;
+    while ($cursor <= $end && $guard < 400) {
+        $buckets[$cursor->format('Y-m-d')] = $cursor->format('M j');
+        $cursor->modify('+1 day');
+        $guard++;
+    }
+    return $buckets;
+}
+
+function staff_report_bucket_key(string $granularity, string $datetime): string
+{
+    $dt = new DateTime($datetime);
+    if ($granularity === 'hour') return $dt->format('H');
+    if ($granularity === 'month') return $dt->format('Y-m');
+    return $dt->format('Y-m-d');
+}
+
+function staff_report_trend_sublabel(string $period, string $dateFrom, string $dateTill): string
+{
+    if ($period === 'daily') return 'Sales by hour of day';
+    if ($period === 'yearly') return 'Sales by month';
+    return 'Sales by day (' . date('M j', strtotime($dateFrom)) . ' – ' . date('M j', strtotime($dateTill)) . ')';
+}
+
+function build_staff_sales_report(mysqli $conn, int $userId, string $period, int $categoryId, string $dateFrom, string $dateTill, bool $allDay, int $timeStart, int $timeEnd): array
+{
+    $granularity = $period === 'daily' ? 'hour' : ($period === 'yearly' ? 'month' : 'day');
+
+    if ($dateTill < $dateFrom) {
+        [$dateFrom, $dateTill] = [$dateTill, $dateFrom];
+    }
+
+    // Every query below is scoped to this staff member's own transactions (user_id) —
+    // one account's sales must never surface in another account's report.
+    $timeSql = $allDay ? '' : ' AND HOUR(t.transaction_date) BETWEEN ? AND ?';
+
+    $sql = "SELECT COUNT(*) AS cnt, COALESCE(SUM(transaction_total),0) AS rev
+            FROM transactions t
+            WHERE t.transaction_status = 'completed' AND DATE(t.transaction_date) BETWEEN ? AND ? AND t.user_id = ?" . $timeSql;
+    $stmt = $conn->prepare($sql);
+    if ($allDay) {
+        $stmt->bind_param('ssi', $dateFrom, $dateTill, $userId);
+    } else {
+        $stmt->bind_param('ssiii', $dateFrom, $dateTill, $userId, $timeStart, $timeEnd);
+    }
+    $stmt->execute();
+    $totals = $stmt->get_result()->fetch_assoc();
+    $stmt->close();
+    $allRevenue = (float)$totals['rev'];
+    $allTxnCount = (int)$totals['cnt'];
+
+    $itemSql = "SELECT t.transaction_id, t.transaction_date, ti.quantity, ti.subtotal,
+                       p.product_id, p.product_name, p.product_category_id, pc.product_category
+                FROM transaction_items ti
+                JOIN transactions t ON t.transaction_id = ti.transaction_id
+                JOIN products p ON p.product_id = ti.product_id
+                JOIN product_category pc ON pc.product_category_id = p.product_category_id
+                WHERE t.transaction_status = 'completed' AND DATE(t.transaction_date) BETWEEN ? AND ? AND t.user_id = ?" . $timeSql;
+    $stmt = $conn->prepare($itemSql);
+    if ($allDay) {
+        $stmt->bind_param('ssi', $dateFrom, $dateTill, $userId);
+    } else {
+        $stmt->bind_param('ssiii', $dateFrom, $dateTill, $userId, $timeStart, $timeEnd);
+    }
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $items = [];
+    while ($row = $result->fetch_assoc()) {
+        $items[] = $row;
+    }
+    $stmt->close();
+
+    $categoryTotals = [];
+    foreach ($items as $row) {
+        $cid = (int)$row['product_category_id'];
+        if (!isset($categoryTotals[$cid])) {
+            $categoryTotals[$cid] = ['name' => $row['product_category'], 'revenue' => 0.0];
+        }
+        $categoryTotals[$cid]['revenue'] += (float)$row['subtotal'];
+    }
+    uasort($categoryTotals, fn($a, $b) => $b['revenue'] <=> $a['revenue']);
+    $itemRevenueTotal = array_sum(array_column($items, 'subtotal'));
+
+    $filteredItems = $categoryId > 0
+        ? array_values(array_filter($items, fn($row) => (int)$row['product_category_id'] === $categoryId))
+        : $items;
+
+    $buckets = staff_report_buckets($granularity, $dateFrom, $dateTill);
+    $trendRevenue = array_fill_keys(array_keys($buckets), 0.0);
+    $trendTxnSets = array_fill_keys(array_keys($buckets), []);
+
+    if ($categoryId > 0) {
+        foreach ($filteredItems as $row) {
+            $key = staff_report_bucket_key($granularity, $row['transaction_date']);
+            if (!array_key_exists($key, $trendRevenue)) continue;
+            $trendRevenue[$key] += (float)$row['subtotal'];
+            $trendTxnSets[$key][$row['transaction_id']] = true;
+        }
+    } else {
+        $sqlTrend = "SELECT transaction_id, transaction_date, transaction_total
+                     FROM transactions t
+                     WHERE t.transaction_status = 'completed' AND DATE(t.transaction_date) BETWEEN ? AND ? AND t.user_id = ?" . $timeSql;
+        $stmt = $conn->prepare($sqlTrend);
+        if ($allDay) {
+            $stmt->bind_param('ssi', $dateFrom, $dateTill, $userId);
+        } else {
+            $stmt->bind_param('ssiii', $dateFrom, $dateTill, $userId, $timeStart, $timeEnd);
+        }
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) {
+            $key = staff_report_bucket_key($granularity, $row['transaction_date']);
+            if (!array_key_exists($key, $trendRevenue)) continue;
+            $trendRevenue[$key] += (float)$row['transaction_total'];
+            $trendTxnSets[$key][$row['transaction_id']] = true;
+        }
+        $stmt->close();
+    }
+
+    $trendLabels = array_values($buckets);
+    $trendRevenueOut = [];
+    $trendTxnOut = [];
+    foreach (array_keys($buckets) as $key) {
+        $trendRevenueOut[] = round($trendRevenue[$key], 2);
+        $trendTxnOut[] = count($trendTxnSets[$key]);
+    }
+
+    if ($categoryId > 0) {
+        $periodRevenue = array_sum(array_column($filteredItems, 'subtotal'));
+        $txnIds = [];
+        foreach ($filteredItems as $row) {
+            $txnIds[$row['transaction_id']] = true;
+        }
+        $periodTxnCount = count($txnIds);
+    } else {
+        $periodRevenue = $allRevenue;
+        $periodTxnCount = $allTxnCount;
+    }
+
+    $daysInRange = (new DateTime($dateFrom))->diff(new DateTime($dateTill))->days + 1;
+
+    if ($period === 'daily') {
+        $avgLabel = 'Avg. Order Value';
+        $avgValue = $periodTxnCount > 0 ? $periodRevenue / $periodTxnCount : 0;
+        $avgSub = 'Per transaction';
+    } else {
+        $avgLabel = 'Avg. Daily';
+        $avgValue = $daysInRange > 0 ? $periodRevenue / $daysInRange : 0;
+        $avgSub = (!$allDay) ? 'For selected hours' : 'Per operating day';
+    }
+
+    if ($categoryId > 0) {
+        $topLabel = 'Top Product';
+        $productTotals = [];
+        foreach ($filteredItems as $row) {
+            $pid = (int)$row['product_id'];
+            if (!isset($productTotals[$pid])) {
+                $productTotals[$pid] = ['name' => $row['product_name'], 'revenue' => 0.0];
+            }
+            $productTotals[$pid]['revenue'] += (float)$row['subtotal'];
+        }
+        uasort($productTotals, fn($a, $b) => $b['revenue'] <=> $a['revenue']);
+        $top = reset($productTotals);
+        $topValue = $top ? $top['name'] : '—';
+        $topSub = $top ? 'Best seller' : 'No sales yet';
+    } else {
+        $topLabel = 'Top Category';
+        $top = reset($categoryTotals);
+        $topValue = $top ? $top['name'] : '—';
+        $topSub = ($top && $itemRevenueTotal > 0) ? round(($top['revenue'] / $itemRevenueTotal) * 100) . '% of sales' : 'No sales yet';
+    }
+
+    $catLabels = [];
+    $catData = [];
+    foreach ($categoryTotals as $c) {
+        $catLabels[] = $c['name'];
+        $catData[] = round($c['revenue'], 2);
+    }
+
+    $productAgg = [];
+    foreach ($filteredItems as $row) {
+        $pid = (int)$row['product_id'];
+        if (!isset($productAgg[$pid])) {
+            $productAgg[$pid] = [
+                'name' => $row['product_name'],
+                'category_name' => $row['product_category'],
+                'units' => 0,
+                'revenue' => 0.0,
+            ];
+        }
+        $productAgg[$pid]['units'] += (int)$row['quantity'];
+        $productAgg[$pid]['revenue'] += (float)$row['subtotal'];
+    }
+    uasort($productAgg, fn($a, $b) => $b['revenue'] <=> $a['revenue']);
+    $totalProductRevenue = array_sum(array_column($productAgg, 'revenue'));
+    $topProducts = [];
+    $rank = 1;
+    foreach (array_slice($productAgg, 0, 5, true) as $p) {
+        $topProducts[] = [
+            'rank' => $rank++,
+            'name' => $p['name'],
+            'category_name' => $p['category_name'],
+            'tag_class' => staff_report_category_tag_class($p['category_name']),
+            'units' => $p['units'],
+            'revenue' => round($p['revenue'], 2),
+            'share' => $totalProductRevenue > 0 ? round(($p['revenue'] / $totalProductRevenue) * 100) : 0,
+        ];
+    }
+
+    return [
+        'kpis' => [
+            'revenue' => round($periodRevenue, 2),
+            'transactions' => $periodTxnCount,
+            'avgLabel' => $avgLabel,
+            'avgValue' => round($avgValue, 2),
+            'avgSub' => $avgSub,
+            'topLabel' => $topLabel,
+            'topValue' => $topValue,
+            'topSub' => $topSub,
+        ],
+        'trend' => [
+            'sublabel' => staff_report_trend_sublabel($period, $dateFrom, $dateTill),
+            'labels' => $trendLabels,
+            'revenue' => $trendRevenueOut,
+            'txn' => $trendTxnOut,
+        ],
+        'categoryBreakdown' => [
+            'labels' => $catLabels,
+            'data' => $catData,
+        ],
+        'topProducts' => $topProducts,
+    ];
+}
+
+$displayName = $_SESSION['username'] ?? 'Staff';
+$initials = strtoupper(substr($displayName, 0, 2));
+$staffUserId = (int)($_SESSION['user_id'] ?? 0);
+
+$categories = [];
+$catResult = $conn->query('SELECT product_category_id, product_category FROM product_category ORDER BY product_category');
+while ($row = $catResult->fetch_assoc()) {
+    $categories[] = $row;
+}
+
+if (isset($_GET['action']) && $_GET['action'] === 'report') {
+    header('Content-Type: application/json');
+
+    $period = in_array($_GET['period'] ?? '', ['daily', 'weekly', 'monthly', 'yearly'], true) ? $_GET['period'] : 'daily';
+    $categoryId = (int)($_GET['category'] ?? 0);
+    $dateFrom = $_GET['date_from'] ?? date('Y-m-d');
+    $dateTill = $_GET['date_till'] ?? date('Y-m-d');
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateFrom)) $dateFrom = date('Y-m-d');
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateTill)) $dateTill = date('Y-m-d');
+    $allDay = ($_GET['all_day'] ?? '1') !== '0';
+    $timeStart = max(0, min(23, (int)($_GET['time_start'] ?? 0)));
+    $timeEnd = max(0, min(23, (int)($_GET['time_end'] ?? 23)));
+
+    echo json_encode(build_staff_sales_report($conn, $staffUserId, $period, $categoryId, $dateFrom, $dateTill, $allDay, $timeStart, $timeEnd));
+    exit;
+}
+
+$todayStr = date('Y-m-d');
+$initialReport = build_staff_sales_report($conn, $staffUserId, 'daily', 0, $todayStr, $todayStr, true, 0, 23);
+?>
 <!DOCTYPE html>
 <html lang="en">
 
@@ -11,6 +323,8 @@
     rel="stylesheet" />
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <style>
     :root {
       --mocha: #4A2C2A;
@@ -204,6 +518,27 @@
       font-size: 13px;
       color: var(--cream);
       font-weight: 500;
+    }
+
+    .logout-link {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(192, 57, 43, .12);
+      border: 1px solid rgba(192, 57, 43, .28);
+      color: #e08a80;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 99px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all .2s;
+    }
+
+    .logout-link:hover {
+      background: rgba(192, 57, 43, .22);
+      color: #e08a80;
     }
 
     /* ── SIDEBAR ── */
@@ -751,6 +1086,10 @@
       border-left: 3px solid var(--sage);
     }
 
+    .toast-msg.warn {
+      border-left: 3px solid #e67e22;
+    }
+
     @keyframes toastIn {
       from {
         opacity: 0;
@@ -796,6 +1135,38 @@
       cursor: pointer;
       user-select: none;
     }
+
+    #print-report-header {
+      display: none;
+    }
+
+    #print-report-header h2 {
+      font-family: var(--font-display);
+      font-size: 20px;
+      color: var(--mocha-deep);
+      margin-bottom: 2px;
+    }
+
+    #print-report-header .print-context {
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 18px;
+    }
+
+    @media print {
+      #app-header, #sidebar, #report-toolbar, .page-strip .btn-outline, .page-strip .btn-primary, #toast-container {
+        display: none !important;
+      }
+      #main {
+        margin: 0 !important;
+      }
+      #print-report-header {
+        display: block !important;
+      }
+      body {
+        background: #fff;
+      }
+    }
   </style>
 </head>
 
@@ -812,8 +1183,12 @@
     <div class="header-center"><span class="portal-badge">Staff Panel</span><span class="header-view-label">Sales
         Reports</span></div>
     <div class="header-right">
-        <div class="header-avatar">AJ</div><span class="header-user-name">Ana Reyes</span>
+      <div class="header-clock" id="clock"></div>
+      <div class="header-user">
+        <div class="header-avatar"><?= htmlspecialchars($initials) ?></div>
+        <span class="header-user-name"><?= htmlspecialchars($displayName) ?></span>
       </div>
+      <a href="../logout.php" class="logout-link"><i class="fas fa-right-from-bracket"></i> Logout</a>
     </div>
   </header>
 
@@ -821,8 +1196,7 @@
     <div class="sidebar-section-label">Staff Panel</div>
     <a href="staffdashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
     <a href="staff_transactions.php" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
-    <a href="staff_inventory.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Inventory <span
-        class="nav-badge">3</span></a>
+    <a href="staff_products.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Products</a>
     <a href="staff_reports.php" class="nav-item active"><i class="fas fa-chart-bar"></i> Sales Report</a>
     <hr class="sidebar-divider" />
     <div class="sidebar-section-label">Settings</div>
@@ -837,16 +1211,16 @@
         <div class="sub">Analyze performance trends across time periods</div>
       </div>
       <div style="display:flex;gap:8px;">
-        <button class="btn-outline" onclick="showToast('Printed!','success')"><i class="fas fa-print"></i>
+        <button class="btn-outline" onclick="printReport()"><i class="fas fa-print"></i>
           Print</button>
-        <button class="btn-primary" onclick="showToast('Exported as PDF!','success')"><i class="fas fa-file-pdf"></i>
+        <button class="btn-primary" id="export-pdf-btn" onclick="exportReportPdf()"><i class="fas fa-file-pdf"></i>
           Export PDF</button>
       </div>
     </div>
 
     <div style="padding:22px 26px;">
 
-      <div
+      <div id="report-toolbar"
         style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:15px;">
 
         <div class="period-tabs" id="period-tabs">
@@ -874,47 +1248,51 @@
 
           <div class="time-filter-wrapper" title="Filter by date range" style="padding:6px 12px;">
             <i class="fas fa-calendar-alt" style="color:#aaa; font-size:13px; margin-right:4px;"></i>
-            <input type="date" id="date-from" value="2024-10-01" onchange="updateReportDisplay()"
+            <input type="date" id="date-from" value="<?= htmlspecialchars($todayStr) ?>" onchange="updateReportDisplay()"
               style="border:none; background:transparent; font-family:var(--font-mono); font-size:13px; font-weight:600; color:var(--charcoal); outline:none; width:110px;">
             <span style="font-size:12px; color:#aaa; font-weight:600; margin:0 8px;">to</span>
-            <input type="date" id="date-till" value="2024-10-08" onchange="updateReportDisplay()"
+            <input type="date" id="date-till" value="<?= htmlspecialchars($todayStr) ?>" onchange="updateReportDisplay()"
               style="border:none; background:transparent; font-family:var(--font-mono); font-size:13px; font-weight:600; color:var(--charcoal); outline:none; width:110px;">
           </div>
 
           <select class="filter-select" id="report-category" onchange="switchCategory(this.value)"
             style="border-color:var(--mocha); font-weight:600; height: 38px;">
-            <option value="All">All Categories</option>
-            <option value="Hot">Hot Drinks</option>
-            <option value="Iced">Iced Drinks</option>
-            <option value="Pastry">Pastries</option>
+            <option value="0">All Categories</option>
+            <?php foreach ($categories as $cat): ?>
+              <option value="<?= (int)$cat['product_category_id'] ?>"><?= htmlspecialchars($cat['product_category']) ?></option>
+            <?php endforeach; ?>
           </select>
         </div>
 
 
       </div>
 
+      <div id="report-print-area">
+      <div id="print-report-header">
+        <h2>Bean There Café — Sales Report</h2>
+        <div class="print-context" id="print-report-context"></div>
+      </div>
+
       <div class="report-kpis">
         <div class="rpt-mini">
           <div class="rpt-mini-label">Period Revenue</div>
-          <div class="rpt-mini-value" id="rpt-rev">₱4,820</div>
-          <div class="rpt-mini-trend"><i class="fas fa-arrow-trend-up"></i> +12.4%</div>
+          <div class="rpt-mini-value" id="rpt-rev">₱0.00</div>
         </div>
         <div class="rpt-mini">
           <div class="rpt-mini-label">Transactions</div>
-          <div class="rpt-mini-value" id="rpt-txn">67</div>
-          <div class="rpt-mini-trend"><i class="fas fa-arrow-trend-up"></i> +8 vs yest</div>
+          <div class="rpt-mini-value" id="rpt-txn">0</div>
         </div>
 
         <div class="rpt-mini">
           <div class="rpt-mini-label" id="rpt-avg-title">Avg. Order Value</div>
-          <div class="rpt-mini-value" id="rpt-avg">₱71.94</div>
+          <div class="rpt-mini-value" id="rpt-avg">₱0.00</div>
           <div class="rpt-mini-trend" style="color:#aaa;" id="rpt-avg-lbl">Per transaction</div>
         </div>
 
         <div class="rpt-mini">
           <div class="rpt-mini-label" id="rpt-top-lbl">Top Category</div>
-          <div class="rpt-mini-value" id="rpt-top-val" style="font-size:16px;">Hot Drinks</div>
-          <div class="rpt-mini-trend" id="rpt-top-sub" style="color:#aaa;">48% of sales</div>
+          <div class="rpt-mini-value" id="rpt-top-val" style="font-size:16px;">—</div>
+          <div class="rpt-mini-trend" id="rpt-top-sub" style="color:#aaa;">No sales yet</div>
         </div>
       </div>
 
@@ -944,100 +1322,22 @@
               <th>Share</th>
             </tr>
           </thead>
-          <tbody id="top-selling-tbody">
-            <tr data-category="Hot">
-              <td>1</td>
-              <td style="font-weight:600;">Caramel Latte</td>
-              <td><span class="tag tag-hot">Hot</span></td>
-              <td class="text-mono">196</td>
-              <td class="text-mono text-gold">₱22,540</td>
-              <td>
-                <div style="display:flex;align-items:center;gap:7px;">
-                  <div style="width:70px;height:6px;background:var(--cream-dark);border-radius:3px;overflow:hidden;">
-                    <div style="width:66%;height:100%;background:var(--gold);border-radius:3px;"></div>
-                  </div><span style="font-size:12px;">66%</span>
-                </div>
-              </td>
-            </tr>
-            <tr data-category="Iced">
-              <td>2</td>
-              <td style="font-weight:600;">Iced Americano</td>
-              <td><span class="tag tag-iced">Iced</span></td>
-              <td class="text-mono">143</td>
-              <td class="text-mono text-gold">₱12,870</td>
-              <td>
-                <div style="display:flex;align-items:center;gap:7px;">
-                  <div style="width:70px;height:6px;background:var(--cream-dark);border-radius:3px;overflow:hidden;">
-                    <div style="width:42%;height:100%;background:var(--mocha-mid);border-radius:3px;"></div>
-                  </div><span style="font-size:12px;">42%</span>
-                </div>
-              </td>
-            </tr>
-            <tr data-category="Pastry">
-              <td>3</td>
-              <td style="font-weight:600;">Croissant</td>
-              <td><span class="tag tag-pastry">Pastry</span></td>
-              <td class="text-mono">98</td>
-              <td class="text-mono text-gold">₱6,860</td>
-              <td>
-                <div style="display:flex;align-items:center;gap:7px;">
-                  <div style="width:70px;height:6px;background:var(--cream-dark);border-radius:3px;overflow:hidden;">
-                    <div style="width:28%;height:100%;background:var(--sage);border-radius:3px;"></div>
-                  </div><span style="font-size:12px;">28%</span>
-                </div>
-              </td>
-            </tr>
-            <tr data-category="Hot">
-              <td>4</td>
-              <td>Matcha Latte</td>
-              <td><span class="tag tag-hot">Hot</span></td>
-              <td class="text-mono">87</td>
-              <td class="text-mono text-gold">₱12,615</td>
-              <td>
-                <div style="display:flex;align-items:center;gap:7px;">
-                  <div style="width:70px;height:6px;background:var(--cream-dark);border-radius:3px;overflow:hidden;">
-                    <div style="width:24%;height:100%;background:#bbb;border-radius:3px;"></div>
-                  </div><span style="font-size:12px;">24%</span>
-                </div>
-              </td>
-            </tr>
-            <tr data-category="Pastry">
-              <td>5</td>
-              <td>Blueberry Muffin</td>
-              <td><span class="tag tag-pastry">Pastry</span></td>
-              <td class="text-mono">64</td>
-              <td class="text-mono text-gold">₱4,480</td>
-              <td>
-                <div style="display:flex;align-items:center;gap:7px;">
-                  <div style="width:70px;height:6px;background:var(--cream-dark);border-radius:3px;overflow:hidden;">
-                    <div style="width:18%;height:100%;background:#ccc;border-radius:3px;"></div>
-                  </div><span style="font-size:12px;">18%</span>
-                </div>
-              </td>
-            </tr>
-          </tbody>
+          <tbody id="top-selling-tbody"></tbody>
         </table>
+      </div>
       </div>
     </div>
   </div>
 
   <div id="toast-container"></div>
+  <script id="report-data" type="application/json"><?= json_encode($initialReport, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?></script>
 
   <script>
-    const chartData = {
-      daily: { labels: ['7 AM', '9 AM', '11 AM', '1 PM', '3 PM', '5 PM', '7 PM'], revenue: [350, 680, 1250, 980, 540, 720, 300], txn: [8, 15, 28, 22, 12, 16, 7], sub: 'Today\'s sales breakdown by hour', revBase: 4820, txnBase: 67, avgBase: 4820 },
-      weekly: { labels: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'], revenue: [3200, 4100, 3800, 4820, 5100, 6200, 5800], txn: [45, 58, 50, 67, 72, 89, 81], sub: 'Weekly sales breakdown (Mon–Sun)', revBase: 33740, txnBase: 469, avgBase: 4820 },
-      monthly: { labels: ['Week 1', 'Week 2', 'Week 3', 'Week 4'], revenue: [24800, 31200, 28900, 36400], txn: [346, 435, 403, 508], sub: 'Monthly sales breakdown by week', revBase: 121300, txnBase: 1692, avgBase: 4332 },
-      yearly: { labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'], revenue: [98000, 87000, 112000, 105000, 118000, 132000, 145000, 138000, 151000, 142000, 165000, 182000], txn: [1360, 1210, 1556, 1460, 1639, 1832, 2016, 1917, 2097, 1972, 2292, 2530], sub: 'Yearly sales breakdown by month', revBase: 1575000, txnBase: 21881, avgBase: 4315 }
-    };
-
-    // Modifiers for dummy data
-    const categoryMultipliers = { 'All': 1, 'Hot': 0.48, 'Iced': 0.32, 'Pastry': 0.20 };
-    let salesChart = null, catChart = null, currentPeriod = 'daily', currentCat = 'All';
+    let salesChart = null, catChart = null, currentPeriod = 'daily', currentCategory = '0';
 
     document.addEventListener('DOMContentLoaded', () => {
       updateClock(); setInterval(updateClock, 1000);
-      updateReportDisplay();
+      renderReport(JSON.parse(document.getElementById('report-data').textContent));
     });
 
     function updateClock() {
@@ -1045,175 +1345,125 @@
       if (clock) clock.textContent = new Date().toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     }
 
+    function pad(n) { return String(n).padStart(2, '0'); }
+    function toDateStr(d) { return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+
+    // Picks a sensible default date range for the chosen period; users can still override it manually
+    function applyPeriodDefaultRange(period) {
+      const today = new Date();
+      const from = new Date(today);
+      if (period === 'weekly') from.setDate(from.getDate() - 6);
+      else if (period === 'monthly') from.setDate(from.getDate() - 29);
+      else if (period === 'yearly') from.setDate(from.getDate() - 364);
+      document.getElementById('date-from').value = toDateStr(from);
+      document.getElementById('date-till').value = toDateStr(today);
+    }
+
     function switchPeriod(p, el) {
       currentPeriod = p;
       document.querySelectorAll('.period-tab').forEach(t => t.classList.remove('active'));
       el.classList.add('active');
-      updateReportDisplay();
+      applyPeriodDefaultRange(p);
+      fetchReport();
     }
 
     function switchCategory(cat) {
-      currentCat = cat;
-      updateReportDisplay();
-      filterTable();
+      currentCategory = cat;
+      fetchReport();
     }
 
     // Shows or hides the specific time inputs based on the All Day checkbox
     function toggleAllDay() {
       const isAllDay = document.getElementById('all-day-cb').checked;
       document.getElementById('time-inputs').style.display = isAllDay ? 'none' : 'flex';
-      updateReportDisplay();
-    }
-
-    // Calculates a multiplier based on the selected time duration vs a 12 hour day (7AM to 7PM)
-    function getTimeMultiplier() {
-      if (document.getElementById('all-day-cb').checked) {
-        return 1;
-      }
-
-      const startStr = document.getElementById('time-start').value;
-      const endStr = document.getElementById('time-end').value;
-
-      if (!startStr || !endStr) return 1;
-
-      const [sH, sM] = startStr.split(':').map(Number);
-      const [eH, eM] = endStr.split(':').map(Number);
-
-      const startDec = sH + (sM / 60);
-      const endDec = eH + (eM / 60);
-
-      if (endDec <= startDec) return 0.05;
-
-      let durationRatio = (endDec - startDec) / 12;
-
-      if (durationRatio > 1) durationRatio = 1;
-      if (durationRatio < 0.05) durationRatio = 0.05;
-
-      return durationRatio;
-    }
-
-    // Period base days for date multiplier
-    const periodBaseDays = {
-      daily: 1,
-      weekly: 7,
-      monthly: 30,
-      yearly: 365
-    };
-
-    // Calculates date range multiplier: days in range / base days for period
-    function getDateMultiplier() {
-      const fromStr = document.getElementById('date-from').value;
-      const tillStr = document.getElementById('date-till').value;
-
-      if (!fromStr || !tillStr) return 1;
-
-      const fromDate = new Date(fromStr + 'T00:00:00');
-      const tillDate = new Date(tillStr + 'T23:59:59');
-
-      if (tillDate < fromDate) return 0.05;
-
-      const daysDiff = Math.ceil((tillDate - fromDate) / (1000 * 60 * 60 * 24)) + 1;
-      const baseDays = periodBaseDays[currentPeriod] || 1;
-
-      let dateRatio = daysDiff / baseDays;
-
-      if (dateRatio > 1) dateRatio = 1;
-      if (dateRatio < 0.05) dateRatio = 0.05;
-
-      return dateRatio;
-    }
-
-
-    function filterTable() {
-      const rows = document.querySelectorAll('#top-selling-tbody tr');
-      let rankCounter = 1;
-      rows.forEach(row => {
-        if (currentCat === 'All' || row.getAttribute('data-category') === currentCat) {
-          row.style.display = '';
-          row.cells[0].textContent = rankCounter === 1 ? '🥇' : (rankCounter === 2 ? '🥈' : (rankCounter === 3 ? '🥉' : rankCounter));
-          rankCounter++;
-        } else {
-          row.style.display = 'none';
-        }
-      });
+      fetchReport();
     }
 
     function updateReportDisplay() {
-      const d = chartData[currentPeriod];
-
-      const catMult = categoryMultipliers[currentCat];
-      const timeMult = getTimeMultiplier();
-      const dateMult = getDateMultiplier();
-      const totalMult = catMult * timeMult * dateMult;
-
-      document.getElementById('chart-sublabel').textContent = d.sub;
-
-      // Calculate current dynamic values
-      const currentRev = Math.round(d.revBase * totalMult);
-      const currentTxn = Math.round(d.txnBase * totalMult);
-
-      // Update KPI Cards 1 & 2
-      document.getElementById('rpt-rev').textContent = '₱' + currentRev.toLocaleString();
-      document.getElementById('rpt-txn').textContent = currentTxn.toLocaleString();
-
-      // DYNAMICALLY UPDATE KPI CARD 3 (Avg. Order Value vs Avg. Daily)
-      const avgLbl = document.getElementById('rpt-avg-title');
-      const avgVal = document.getElementById('rpt-avg');
-      const avgSub = document.getElementById('rpt-avg-lbl');
-      const isAllDay = document.getElementById('all-day-cb').checked;
-
-      if (currentPeriod === 'daily') {
-        avgLbl.textContent = 'Avg. Order Value';
-        // Prevent division by zero if transactions drop to 0
-        const avgOrder = currentTxn > 0 ? (currentRev / currentTxn) : 0;
-        avgVal.textContent = '₱' + avgOrder.toFixed(2);
-        avgSub.textContent = "Per transaction";
-      } else {
-        avgLbl.textContent = 'Avg. Daily';
-        avgVal.textContent = '₱' + Math.round(d.avgBase * totalMult).toLocaleString();
-        if (!isAllDay && timeMult < 1) {
-          avgSub.textContent = "For selected hours";
-        } else {
-          avgSub.textContent = "Per operating day";
-        }
-      }
-
-      // Update Top Category / Product label
-      const lbl = document.getElementById('rpt-top-lbl');
-      const val = document.getElementById('rpt-top-val');
-      const sub = document.getElementById('rpt-top-sub');
-
-      if (currentCat === 'All') {
-        lbl.textContent = 'Top Category'; val.textContent = 'Hot Drinks'; sub.textContent = '48% of sales';
-      } else if (currentCat === 'Hot') {
-        lbl.textContent = 'Top Product'; val.textContent = 'Caramel Latte'; sub.textContent = 'Best Seller';
-      } else if (currentCat === 'Iced') {
-        lbl.textContent = 'Top Product'; val.textContent = 'Iced Americano'; sub.textContent = 'Best Seller';
-      } else if (currentCat === 'Pastry') {
-        lbl.textContent = 'Top Product'; val.textContent = 'Croissant'; sub.textContent = 'Best Seller';
-      }
-
-      initCharts(d, totalMult);
+      fetchReport();
     }
 
+    async function fetchReport() {
+      const params = new URLSearchParams({
+        action: 'report',
+        period: currentPeriod,
+        category: currentCategory,
+        date_from: document.getElementById('date-from').value,
+        date_till: document.getElementById('date-till').value,
+        all_day: document.getElementById('all-day-cb').checked ? '1' : '0',
+        time_start: (document.getElementById('time-start').value || '00:00').split(':')[0],
+        time_end: (document.getElementById('time-end').value || '23:59').split(':')[0]
+      });
 
-    function initCharts(data, mult) {
+      try {
+        const res = await fetch('staff_reports.php?' + params.toString());
+        renderReport(await res.json());
+      } catch (err) {
+        showToast('Could not load report data.', 'warn');
+      }
+    }
+
+    function money(n) {
+      return '₱' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function renderReport(data) {
+      document.getElementById('chart-sublabel').textContent = data.trend.sublabel;
+
+      document.getElementById('rpt-rev').textContent = money(data.kpis.revenue);
+      document.getElementById('rpt-txn').textContent = data.kpis.transactions.toLocaleString();
+
+      document.getElementById('rpt-avg-title').textContent = data.kpis.avgLabel;
+      document.getElementById('rpt-avg').textContent = money(data.kpis.avgValue);
+      document.getElementById('rpt-avg-lbl').textContent = data.kpis.avgSub;
+
+      document.getElementById('rpt-top-lbl').textContent = data.kpis.topLabel;
+      document.getElementById('rpt-top-val').textContent = data.kpis.topValue;
+      document.getElementById('rpt-top-sub').textContent = data.kpis.topSub;
+
+      renderTopProducts(data.topProducts);
+      renderCharts(data);
+    }
+
+    function renderTopProducts(products) {
+      const tbody = document.getElementById('top-selling-tbody');
+      if (!products || products.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px 8px;">No sales recorded for this period yet.</td></tr>';
+        return;
+      }
+      const medals = { 1: '🥇', 2: '🥈', 3: '🥉' };
+      tbody.innerHTML = products.map(p => `
+        <tr>
+          <td>${medals[p.rank] || p.rank}</td>
+          <td style="font-weight:600;">${p.name}</td>
+          <td><span class="tag ${p.tag_class}">${p.category_name}</span></td>
+          <td class="text-mono">${p.units.toLocaleString()}</td>
+          <td class="text-mono text-gold">${money(p.revenue)}</td>
+          <td>
+            <div style="display:flex;align-items:center;gap:7px;">
+              <div style="width:70px;height:6px;background:var(--cream-dark);border-radius:3px;overflow:hidden;">
+                <div style="width:${p.share}%;height:100%;background:var(--gold);border-radius:3px;"></div>
+              </div><span style="font-size:12px;">${p.share}%</span>
+            </div>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    function renderCharts(data) {
       const sc = document.getElementById('salesChart');
       const cc = document.getElementById('catChart');
       if (!sc || !cc) return;
       if (salesChart) salesChart.destroy();
       if (catChart) catChart.destroy();
 
-      const scaledRev = data.revenue.map(val => Math.round(val * mult));
-      const scaledTxn = data.txn.map(val => Math.round(val * mult));
-
       salesChart = new Chart(sc, {
         type: 'bar',
         data: {
-          labels: data.labels,
+          labels: data.trend.labels,
           datasets: [
-            { label: `Revenue (₱)`, data: scaledRev, backgroundColor: '#C9943Acc', borderColor: '#C9943A', borderWidth: 2, borderRadius: 6, yAxisID: 'y' },
-            { label: 'Transactions', data: scaledTxn, type: 'line', borderColor: '#4A2C2A', backgroundColor: '#4A2C2A22', tension: .4, pointBackgroundColor: '#4A2C2A', pointRadius: 4, yAxisID: 'y1' }
+            { label: 'Revenue (₱)', data: data.trend.revenue, backgroundColor: '#C9943Acc', borderColor: '#C9943A', borderWidth: 2, borderRadius: 6, yAxisID: 'y' },
+            { label: 'Transactions', data: data.trend.txn, type: 'line', borderColor: '#4A2C2A', backgroundColor: '#4A2C2A22', tension: .4, pointBackgroundColor: '#4A2C2A', pointRadius: 4, yAxisID: 'y1' }
           ]
         },
         options: {
@@ -1221,20 +1471,91 @@
           plugins: { legend: { labels: { font: { family: "'DM Sans',sans-serif", size: 11 }, color: '#666' } } },
           scales: {
             y: { grid: { color: 'rgba(0,0,0,.05)' }, ticks: { color: '#999', font: { size: 10 }, callback: v => '₱' + v.toLocaleString() } },
-            y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#999', font: { size: 10 } } },
+            y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { color: '#999', font: { size: 10 }, precision: 0 } },
             x: { grid: { display: false }, ticks: { color: '#999', font: { size: 11 } } }
           }
         }
       });
 
+      const hasCatData = data.categoryBreakdown.labels.length > 0;
       catChart = new Chart(cc, {
         type: 'doughnut',
         data: {
-          labels: ['Hot Drinks', 'Iced Drinks', 'Pastries'],
-          datasets: [{ data: [48, 32, 20], backgroundColor: ['#4A2C2A', '#C9943A', '#7A9E7E'], borderWidth: 0, hoverOffset: 8 }]
+          labels: hasCatData ? data.categoryBreakdown.labels : ['No sales yet'],
+          datasets: [{
+            data: hasCatData ? data.categoryBreakdown.data : [1],
+            backgroundColor: hasCatData ? ['#4A2C2A', '#C9943A', '#7A9E7E', '#2980b9', '#d68910', '#c0392b'] : ['#e0e0e0'],
+            borderWidth: 0, hoverOffset: hasCatData ? 8 : 0
+          }]
         },
         options: { responsive: true, cutout: '68%', plugins: { legend: { position: 'bottom', labels: { font: { family: "'DM Sans',sans-serif", size: 12 }, color: '#666', padding: 16 } } } }
       });
+    }
+
+    function reportContextLabel() {
+      const periodLabel = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly', yearly: 'Yearly' }[currentPeriod] || currentPeriod;
+      const catSelect = document.getElementById('report-category');
+      const catLabel = catSelect.options[catSelect.selectedIndex].textContent;
+      const from = document.getElementById('date-from').value;
+      const till = document.getElementById('date-till').value;
+      return `${periodLabel} report · ${catLabel} · ${from} to ${till} · Generated ${new Date().toLocaleString('en-PH')}`;
+    }
+
+    function printReport() {
+      document.getElementById('print-report-context').textContent = reportContextLabel();
+      window.print();
+    }
+
+    async function exportReportPdf() {
+      const btn = document.getElementById('export-pdf-btn');
+      const originalHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating…';
+
+      const header = document.getElementById('print-report-header');
+      document.getElementById('print-report-context').textContent = reportContextLabel();
+      header.style.display = 'block';
+
+      try {
+        const target = document.getElementById('report-print-area');
+        const canvas = await html2canvas(target, { scale: 2, backgroundColor: '#ffffff', useCORS: true });
+        const imgData = canvas.toDataURL('image/png');
+
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const pageHeight = pdf.internal.pageSize.getHeight();
+        const margin = 24;
+        const imgWidth = pageWidth - margin * 2;
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+        const pageContentHeight = pageHeight - margin * 2;
+
+        let position = margin;
+        let remainingHeight = imgHeight;
+        let shown = 0;
+        pdf.addImage(imgData, 'PNG', margin, position, imgWidth, imgHeight);
+        remainingHeight -= pageContentHeight;
+        shown += pageContentHeight;
+
+        while (remainingHeight > 0) {
+          pdf.addPage();
+          position = margin - shown;
+          pdf.addImage(imgData, 'PNG', margin, position, imgWidth, imgHeight);
+          remainingHeight -= pageContentHeight;
+          shown += pageContentHeight;
+        }
+
+        const from = document.getElementById('date-from').value;
+        const till = document.getElementById('date-till').value;
+        pdf.save(`sales-report-${from}-to-${till}.pdf`);
+        showToast('PDF exported.', 'success');
+      } catch (err) {
+        showToast('Could not generate the PDF. Please try again.', 'warn');
+      } finally {
+        header.style.display = 'none';
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+      }
     }
 
     function showToast(msg, type = 'success') {

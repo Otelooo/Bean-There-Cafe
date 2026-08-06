@@ -316,6 +316,27 @@ while ($row = $result->fetch_assoc()) {
       font-weight: 500;
     }
 
+    .logout-link {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(192, 57, 43, .12);
+      border: 1px solid rgba(192, 57, 43, .28);
+      color: #e08a80;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 99px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all .2s;
+    }
+
+    .logout-link:hover {
+      background: rgba(192, 57, 43, .22);
+      color: #e08a80;
+    }
+
     /* ── SIDEBAR ── */
     #sidebar {
       position: fixed;
@@ -1154,9 +1175,11 @@ while ($row = $result->fetch_assoc()) {
     <div class="header-center"><span class="portal-badge">Owner Panel</span><span class="header-view-label">User
         Management</span></div>
     <div class="header-right">
-      
+      <div class="header-clock" id="clock"></div>
+      <div class="header-user">
         <div class="header-avatar"><?= htmlspecialchars($initials) ?></div><span class="header-user-name"><?= htmlspecialchars($displayName) ?></span>
       </div>
+      <a href="../logout.php" class="logout-link"><i class="fas fa-right-from-bracket"></i> Logout</a>
     </div>
   </header>
 
@@ -1164,14 +1187,14 @@ while ($row = $result->fetch_assoc()) {
     <div class="sidebar-section-label">Owner Panel</div>
     <a href="dashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
     <a href="transactions.php" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
-    <a href="inventory.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Inventory <span
-        class="nav-badge">3</span></a>
+    <a href="products.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Products</a>
+    <a href="inventory.php" class="nav-item"><i class="fas fa-warehouse"></i> Inventory</a>
     <a href="reports.php" class="nav-item"><i class="fas fa-chart-bar"></i> Sales Report</a>
     <a href="users.php" class="nav-item active"><i class="fas fa-users-gear"></i> User Management</a>
     <hr class="sidebar-divider" />
     <div class="sidebar-section-label">Settings</div>
-    <div class="nav-item" onclick="showToast('Settings — coming soon!','success')"><i class="fas fa-gear"></i> System
-      Settings</div>
+    <a href="settings.php" class="nav-item"><i class="fas fa-gear"></i> System
+      Settings</a>
     <div class="nav-item" onclick="showToast('Backup started!','success')"><i class="fas fa-database"></i> Data Backup
     </div>
   </nav>

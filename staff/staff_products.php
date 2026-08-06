@@ -1,15 +1,82 @@
+<?php
+session_start();
+require_once __DIR__ . '/../db_connect.php';
+require_once __DIR__ . '/../settings_helper.php';
+
+if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'cafe staff') {
+    header('Location: ../signin.php');
+    exit;
+}
+
+function staff_category_tag_class(string $name): string
+{
+    $n = strtolower($name);
+    if (str_contains($n, 'hot')) return 'tag-hot';
+    if (str_contains($n, 'iced') || str_contains($n, 'cold')) return 'tag-iced';
+    if (str_contains($n, 'pastr') || str_contains($n, 'bread') || str_contains($n, 'bake')) return 'tag-pastry';
+    return 'tag-supply';
+}
+
+function staff_stock_level(int $stock, int $critical, int $low): string
+{
+    if ($stock <= $critical) return 'crit';
+    if ($stock <= $low) return 'low';
+    return 'ok';
+}
+
+$displayName = $_SESSION['username'] ?? 'Staff';
+$initials = strtoupper(substr($displayName, 0, 2));
+
+$settings = get_system_settings($conn);
+$criticalStockThreshold = (int)$settings['critical_stock_threshold'];
+$lowStockThreshold = (int)$settings['low_stock_threshold'];
+
+$categories = [];
+$catResult = $conn->query('SELECT product_category_id, product_category FROM product_category ORDER BY product_category');
+while ($row = $catResult->fetch_assoc()) {
+    $categories[] = $row;
+}
+
+$products = [];
+$prodResult = $conn->query('
+    SELECT p.product_id, p.product_name, p.product_stocks, p.product_cost, p.product_selling_price,
+           p.product_category_id, pc.product_category, p.product_image, s.supplier_name, s.supplier_contact
+    FROM products p
+    JOIN product_category pc ON pc.product_category_id = p.product_category_id
+    JOIN product_supplier s ON s.product_supplier_id = p.product_supplier_id
+    ORDER BY pc.product_category, p.product_name
+');
+while ($row = $prodResult->fetch_assoc()) {
+    $stock = (int)$row['product_stocks'];
+    $products[] = [
+        'id' => (int)$row['product_id'],
+        'name' => $row['product_name'],
+        'category_id' => (int)$row['product_category_id'],
+        'category_name' => $row['product_category'],
+        'tag_class' => staff_category_tag_class($row['product_category']),
+        'stock' => $stock,
+        'level' => staff_stock_level($stock, $criticalStockThreshold, $lowStockThreshold),
+        'cost' => (float)$row['product_cost'],
+        'price' => (float)$row['product_selling_price'],
+        'image' => $row['product_image'] ? '../' . $row['product_image'] : null,
+        'supplier_name' => $row['supplier_name'],
+        'supplier_contact' => $row['supplier_contact'],
+    ];
+}
+
+$criticalCount = count(array_filter($products, fn($p) => $p['level'] === 'crit'));
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Inventory | SmartStock — Bean There Café</title>
+  <title>Products | SmartStock — Bean There Café</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet"/>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet"/>
-  
+
   <style>
-    /* ---> PASTE THE ENTIRE CSS BLOCK FROM DASHBOARD.HTML HERE <--- */
      :root {
       --mocha:        #4A2C2A;
       --mocha-deep:   #2E1A18;
@@ -93,6 +160,8 @@
       display: flex; align-items: center; justify-content: center;
     }
     .header-user-name { font-size: 13px; color: var(--cream); font-weight: 500; }
+    .logout-link { display:flex; align-items:center; gap:6px; background:rgba(192,57,43,.12); border:1px solid rgba(192,57,43,.28); color:#e08a80; font-size:12px; font-weight:600; padding:6px 14px; border-radius:99px; cursor:pointer; text-decoration:none; transition:all .2s; }
+    .logout-link:hover { background:rgba(192,57,43,.22); color:#e08a80; }
 
     /* ── SIDEBAR ── */
     #sidebar {
@@ -107,7 +176,7 @@
       font-size: 9.5px; font-weight: 700; letter-spacing: 2px;
       text-transform: uppercase; color: rgba(245,236,215,.3);
     }
-    a.nav-item { text-decoration: none; } /* <-- NEW ADDITION */
+    a.nav-item { text-decoration: none; }
     .nav-item {
       display: flex; align-items: center; gap: 12px;
       padding: 11px 20px; color: rgba(245,236,215,.6);
@@ -190,7 +259,7 @@
     .tbl-btn-act  { border-color:var(--sage); color:var(--sage); } .tbl-btn-act:hover { background:var(--sage); color:#fff; }
 
     /* ── SEARCH / TOOLBAR ── */
-    .inv-toolbar { display:flex; gap:10px; align-items:center; margin-bottom:18px; flex-wrap:wrap; }
+    .product-toolbar { display:flex; gap:10px; align-items:center; margin-bottom:18px; flex-wrap:wrap; }
     .search-box { flex:1; min-width:200px; display:flex; align-items:center; gap:8px; background:var(--cream); border:1.5px solid var(--cream-dark); border-radius:8px; padding:8px 13px; transition:border-color .2s; }
     .search-box:focus-within { border-color:var(--mocha); }
     .search-box i { color:#bbb; font-size:13px; }
@@ -259,14 +328,26 @@
     <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
     <div class="brand-text"><div class="name">SmartStock</div><div class="sub">Bean There Café</div></div>
   </div>
-  <div class="header-center"><span class="portal-badge">Staff Panel</span><span class="header-view-label">Inventory</span></div>
+  <div class="header-center"><span class="portal-badge">Staff Panel</span><span class="header-view-label">Products</span></div>
+  <div class="header-right">
+    <div class="header-clock" id="clock"></div>
+    <div class="header-user">
+      <div class="header-avatar"><?= htmlspecialchars($initials) ?></div>
+      <span class="header-user-name"><?= htmlspecialchars($displayName) ?></span>
+    </div>
+    <a href="../logout.php" class="logout-link"><i class="fas fa-right-from-bracket"></i> Logout</a>
+  </div>
 </header>
 
 <nav id="sidebar">
   <div class="sidebar-section-label">Staff Panel</div>
   <a href="staffdashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
   <a href="staff_transactions.php" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
-  <a href="staff_inventory.php" class="nav-item active"><i class="fas fa-boxes-stacked"></i> Inventory <span class="nav-badge">3</span></a>
+  <a href="staff_products.php" class="nav-item active"><i class="fas fa-boxes-stacked"></i> Products
+    <?php if ($criticalCount > 0): ?>
+      <span class="nav-badge"><?= $criticalCount ?></span>
+    <?php endif; ?>
+  </a>
   <a href="staff_reports.php" class="nav-item"><i class="fas fa-chart-bar"></i> Sales Report</a>
   <hr class="sidebar-divider"/>
   <div class="sidebar-section-label">Settings</div>
@@ -275,191 +356,112 @@
 <div id="main">
   <div class="page-strip">
     <div>
-      <h1><i class="fas fa-boxes-stacked" style="color:var(--gold);font-size:18px;margin-right:8px;"></i>Inventory Management</h1>
+      <h1><i class="fas fa-boxes-stacked" style="color:var(--gold);font-size:18px;margin-right:8px;"></i>Products</h1>
       <div class="sub">Track stock levels, unit costs, and supplier contacts</div>
     </div>
-    <button class="btn-primary" onclick="openModal('modal-add-item')"><i class="fas fa-plus"></i> Add Product</button>
   </div>
   <div style="padding:22px 26px;">
-    <div class="inv-toolbar">
+    <div class="product-toolbar">
       <div class="search-box">
         <i class="fas fa-magnifying-glass"></i>
-        <input type="text" id="inv-search" placeholder="Search products, suppliers…" oninput="filterInventory()"/>
+        <input type="text" id="product-search" placeholder="Search products, suppliers…" oninput="filterProducts()"/>
       </div>
-      <select class="filter-select" id="inv-cat-filter" onchange="filterInventory()"><option value="">All Categories</option><option value="Hot">Hot Beverages</option><option value="Iced">Iced Beverages</option><option value="Pastries">Pastries</option><option value="Supplies">Supplies</option></select>
-      <select class="filter-select" id="inv-stock-filter" onchange="filterInventory()"><option value="">All Stock Levels</option><option value="ok">OK</option><option value="low">Low</option><option value="crit">Critical</option></select>
-      <button class="btn-outline" onclick="showToast('Exported to CSV!','success')"><i class="fas fa-file-export"></i> Export</button>
+      <select class="filter-select" id="product-cat-filter" onchange="filterProducts()">
+        <option value="">All Categories</option>
+        <?php foreach ($categories as $cat): ?>
+          <option value="<?= (int)$cat['product_category_id'] ?>"><?= htmlspecialchars($cat['product_category']) ?></option>
+        <?php endforeach; ?>
+      </select>
+      <select class="filter-select" id="product-stock-filter" onchange="filterProducts()"><option value="">All Stock Levels</option><option value="ok">OK</option><option value="low">Low</option><option value="crit">Critical</option></select>
     </div>
     <div class="table-wrap">
       <table class="data-table">
-        <thead><tr><th>Product Name</th><th>Category</th><th>Stock</th><th>Unit Cost</th><th>Selling Price</th><th>Supplier</th><th>Contact</th><th>Actions</th></tr></thead>
-        <tbody id="inv-tbody"></tbody>
+        <thead><tr><th>Image</th><th>Product Name</th><th>Category</th><th>Stock</th><th>Unit Cost</th><th>Selling Price</th><th>Supplier</th><th>Contact</th></tr></thead>
+        <tbody id="product-tbody"></tbody>
       </table>
     </div>
   </div>
 </div>
 
-<div class="modal-overlay" id="modal-add-item">
-  <div class="modal-box">
-    <div class="modal-title"><i class="fas fa-plus-circle" style="color:var(--gold);margin-right:8px;"></i>Add New Product</div>
-    <div class="modal-sub">Fill in product details to add to inventory.</div>
-    <div class="modal-field"><label>Product Name</label><input type="text" placeholder="e.g. Caramel Macchiato" /></div>
-    <div class="modal-field"><label>Category</label><select><option>Hot Beverages</option><option>Iced Beverages</option><option>Pastries</option><option>Supplies</option></select></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><div class="modal-field"><label>Stock Quantity</label><input type="number" placeholder="0" /></div><div class="modal-field"><label>Min. Threshold</label><input type="number" placeholder="5" /></div></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;"><div class="modal-field"><label>Unit Cost (₱)</label><input type="number" placeholder="0.00" /></div><div class="modal-field"><label>Selling Price (₱)</label><input type="number" placeholder="0.00" /></div></div>
-    <div class="modal-field"><label>Supplier Name</label><input type="text" placeholder="Supplier company" /></div>
-    <div class="modal-field"><label>Supplier Contact</label><input type="text" placeholder="09XX-XXX-XXXX" /></div>
-    <button class="btn-modal-primary" onclick="closeModal('modal-add-item');showToast('Product added to inventory!','success')"><i class="fas fa-check" style="margin-right:6px;"></i>Add Product</button>
-    <button class="btn-modal-cancel" onclick="closeModal('modal-add-item')">Cancel</button>
-  </div>
-</div>
-
 <div id="toast-container"></div>
+<script id="products-data" type="application/json"><?= json_encode($products, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?></script>
 
 <script>
-  const inventory = [
-  { name:'Espresso Beans (1kg)', cat:'Supplies', stock:15, cost:'₱850', price:'—', supplier:'Benguet Coffee Co.', contact:'0917-234-5678', level:'ok' },
-  { name:'Soy Milk (1L)',        cat:'Supplies', stock:2,  cost:'₱65',  price:'—', supplier:'Magnolia Foods',    contact:'0918-345-6789', level:'crit' },
-  { name:'Matcha Powder (250g)', cat:'Supplies', stock:8,  cost:'₱420', price:'—', supplier:'Nishio Tea PH',     contact:'0919-456-7890', level:'ok' },
-  { name:'Caramel Syrup (750ml)',cat:'Supplies', stock:10, cost:'₱195', price:'—', supplier:'Monin Philippines', contact:'0920-567-8901', level:'ok' },
-  { name:'Whipped Cream',        cat:'Supplies', stock:5,  cost:'₱120', price:'—', supplier:'Alaska Dairy',      contact:'0921-678-9012', level:'low' },
-  { name:'Caramel Latte',        cat:'Hot',      stock:28, cost:'₱72',  price:'₱145', supplier:'(In-house)',     contact:'—', level:'ok' },
-  { name:'Iced Americano',       cat:'Iced',     stock:35, cost:'₱48',  price:'₱120', supplier:'(In-house)',     contact:'—', level:'ok' },
-  { name:'Croissant',            cat:'Pastries', stock:20, cost:'₱35',  price:'₱85',  supplier:'La Farine Bakery', contact:'0922-789-0123', level:'ok' },
-  { name:'Blueberry Muffin',     cat:'Pastries', stock:4,  cost:'₱30',  price:'₱70',  supplier:'La Farine Bakery', contact:'0922-789-0123', level:'low' },
-  { name:'Cinnamon Roll',        cat:'Pastries', stock:8,  cost:'₱38',  price:'₱90',  supplier:'La Farine Bakery', contact:'0922-789-0123', level:'ok' },
-  { name:'Banana Bread',         cat:'Pastries', stock:6,  cost:'₱32',  price:'₱75',  supplier:'La Farine Bakery', contact:'0922-789-0123', level:'ok' },
-];
+  // Product catalog — loaded from the products table (see products-data script tag above)
+  const products = JSON.parse(document.getElementById('products-data').textContent);
 
-const chartData = {
-  weekly: { labels:['Mon','Tue','Wed','Thu','Fri','Sat','Sun'], revenue:[3200,4100,3800,4820,5100,6200,5800], txn:[45,58,50,67,72,89,81], sub:'Weekly sales breakdown (Mon–Sun)', rev:'₱33,740', txnT:'469', avg:'₱4,820' },
-  monthly: { labels:['Week 1','Week 2','Week 3','Week 4'], revenue:[24800,31200,28900,36400], txn:[346,435,403,508], sub:'Monthly sales breakdown by week', rev:'₱121,300', txnT:'1,692', avg:'₱4,332' },
-  yearly: { labels:['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'], revenue:[98000,87000,112000,105000,118000,132000,145000,138000,151000,142000,165000,182000], txn:[1360,1210,1556,1460,1639,1832,2016,1917,2097,1972,2292,2530], sub:'Yearly sales breakdown by month', rev:'₱1,575,000', txnT:'21,881', avg:'₱4,315' }
-};
-
-let salesChart = null, catChart = null, currentPeriod = 'weekly';
-
-document.addEventListener('DOMContentLoaded', () => {
-  updateClock(); setInterval(updateClock, 1000);
-  
-  // Safety checks added so scripts only run if elements exist on the current page
-  const dashDate = document.getElementById('dash-date');
-  if (dashDate) dashDate.textContent = 'Overview — ' + new Date().toLocaleDateString('en-PH', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
-  
-  const invBody = document.getElementById('inv-tbody');
-  if (invBody) renderInventory('','','');
-  
-  const sc = document.getElementById('salesChart');
-  if (sc) setTimeout(initCharts, 150);
-});
-
-function updateClock() {
-  const clock = document.getElementById('clock');
-  if(clock) clock.textContent = new Date().toLocaleTimeString('en-PH', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
-}
-
-function renderInventory(search, cat, level) {
-  const tbody = document.getElementById('inv-tbody');
-  if(!tbody) return;
-  const filtered = inventory.filter(i => {
-    const s = !search || i.name.toLowerCase().includes(search.toLowerCase()) || i.supplier.toLowerCase().includes(search.toLowerCase());
-    const c = !cat   || i.cat === cat;
-    const l = !level || i.level === level;
-    return s && c && l;
+  document.addEventListener('DOMContentLoaded', () => {
+    updateClock(); setInterval(updateClock, 1000);
+    renderProducts('', '', '');
   });
-  tbody.innerHTML = filtered.map(i => `
-    <tr>
-      <td style="font-weight:600;">${i.name}</td>
-      <td><span class="tag ${i.cat==='Hot'?'tag-hot':i.cat==='Iced'?'tag-iced':i.cat==='Pastries'?'tag-pastry':'tag-supply'}">${i.cat}</span></td>
-      <td><div class="stock-indicator stock-${i.level}"><div class="stock-dot"></div>${i.stock}</div></td>
-      <td class="text-mono">${i.cost}</td>
-      <td class="text-mono">${i.price}</td>
-      <td>${i.supplier}</td>
-      <td class="text-mono" style="font-size:12px;">${i.contact}</td>
-      <td style="display:flex;gap:6px;">
-        <button class="tbl-btn tbl-btn-edit" onclick="showToast('Edit item — open form','success')">Edit</button>
-        <button class="tbl-btn tbl-btn-del"  onclick="showToast('Delete item?','warn')">Delete</button>
-      </td>
-    </tr>
-  `).join('');
-}
 
-function filterInventory() {
-  renderInventory(
-    document.getElementById('inv-search').value,
-    document.getElementById('inv-cat-filter').value,
-    document.getElementById('inv-stock-filter').value
-  );
-}
+  function updateClock() {
+    const clock = document.getElementById('clock');
+    if (clock) clock.textContent = new Date().toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
 
-function filterUsers(q) {
-  const rows = document.querySelectorAll('#user-tbody tr');
-  rows.forEach(r => r.style.display = r.textContent.toLowerCase().includes(q.toLowerCase()) ? '' : 'none');
-}
+  function money(n) {
+    return '₱' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
 
-function initCharts() {
-  const sc = document.getElementById('salesChart');
-  const cc = document.getElementById('catChart');
-  if (!sc || !cc) return;
-  if (salesChart) salesChart.destroy();
-  if (catChart)   catChart.destroy();
-  const d = chartData[currentPeriod];
-  salesChart = new Chart(sc, {
-    type:'bar',
-    data:{
-      labels: d.labels,
-      datasets:[
-        { label:'Revenue (₱)', data:d.revenue, backgroundColor:'#C9943Acc', borderColor:'#C9943A', borderWidth:2, borderRadius:6, yAxisID:'y' },
-        { label:'Transactions', data:d.txn, type:'line', borderColor:'#4A2C2A', backgroundColor:'#4A2C2A22', tension:.4, pointBackgroundColor:'#4A2C2A', pointRadius:4, yAxisID:'y1' }
-      ]
-    },
-    options:{
-      responsive:true, interaction:{mode:'index',intersect:false},
-      plugins:{ legend:{ labels:{ font:{family:"'DM Sans',sans-serif",size:11}, color:'#666' } } },
-      scales:{
-        y:  { grid:{color:'rgba(0,0,0,.05)'}, ticks:{ color:'#999', font:{size:10}, callback: v => '₱'+v.toLocaleString() } },
-        y1: { position:'right', grid:{drawOnChartArea:false}, ticks:{color:'#999',font:{size:10}} },
-        x:  { grid:{display:false}, ticks:{color:'#999',font:{size:11}} }
-      }
+  function renderProducts(search, catId, level) {
+    const tbody = document.getElementById('product-tbody');
+    if (!tbody) return;
+
+    if (products.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#aaa;padding:24px 8px;">No products yet.</td></tr>';
+      return;
     }
-  });
-  catChart = new Chart(cc, {
-    type:'doughnut',
-    data:{
-      labels:['Hot Drinks','Iced Drinks','Pastries'],
-      datasets:[{ data:[48,32,20], backgroundColor:['#4A2C2A','#C9943A','#7A9E7E'], borderWidth:0, hoverOffset:8 }]
-    },
-    options:{ responsive:true, cutout:'68%', plugins:{ legend:{ position:'bottom', labels:{ font:{family:"'DM Sans',sans-serif",size:12}, color:'#666', padding:16 } } } }
-  });
-}
 
-function switchPeriod(p, el) {
-  currentPeriod = p;
-  document.querySelectorAll('.period-tab').forEach(t => t.classList.remove('active'));
-  el.classList.add('active');
-  const d = chartData[p];
-  document.getElementById('chart-sublabel').textContent = d.sub;
-  document.getElementById('rpt-rev').textContent  = d.rev;
-  document.getElementById('rpt-txn').textContent  = d.txnT;
-  document.getElementById('rpt-avg').textContent  = d.avg;
-  initCharts();
-}
+    const filtered = products.filter(p => {
+      const s = !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.supplier_name.toLowerCase().includes(search.toLowerCase());
+      const c = !catId || String(p.category_id) === String(catId);
+      const l = !level || p.level === level;
+      return s && c && l;
+    });
 
-function openModal(id)  { document.getElementById(id).classList.add('show'); }
-function closeModal(id) { document.getElementById(id).classList.remove('show'); }
-document.querySelectorAll('.modal-overlay').forEach(m =>
-  m.addEventListener('click', e => { if (e.target === m) closeModal(m.id); })
-);
+    if (filtered.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#aaa;padding:24px 8px;">No products match your filters.</td></tr>';
+      return;
+    }
 
-function showToast(msg, type = 'success') {
-  const c = document.getElementById('toast-container');
-  if(!c) return;
-  const t = document.createElement('div');
-  t.className = `toast-msg ${type}`;
-  t.innerHTML = `<i class="fas ${type==='success'?'fa-circle-check':'fa-triangle-exclamation'}"></i> ${msg}`;
-  c.appendChild(t);
-  setTimeout(() => { t.style.opacity='0'; t.style.transition='opacity .3s'; setTimeout(()=>t.remove(),300); }, 2800);
-}
+    tbody.innerHTML = filtered.map(p => `
+      <tr>
+        <td>${p.image ? `<img src="${p.image}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:6px;">` : `<div style="width:40px;height:40px;border-radius:6px;background:var(--cream-dark);"></div>`}</td>
+        <td style="font-weight:600;">${p.name}</td>
+        <td><span class="tag ${p.tag_class}">${p.category_name}</span></td>
+        <td><div class="stock-indicator stock-${p.level}"><div class="stock-dot"></div>${p.stock}</div></td>
+        <td class="text-mono">${money(p.cost)}</td>
+        <td class="text-mono">${money(p.price)}</td>
+        <td>${p.supplier_name}</td>
+        <td class="text-mono" style="font-size:12px;">${p.supplier_contact}</td>
+      </tr>
+    `).join('');
+  }
+
+  function filterProducts() {
+    renderProducts(
+      document.getElementById('product-search').value,
+      document.getElementById('product-cat-filter').value,
+      document.getElementById('product-stock-filter').value
+    );
+  }
+
+  function openModal(id)  { document.getElementById(id).classList.add('show'); }
+  function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+  document.querySelectorAll('.modal-overlay').forEach(m =>
+    m.addEventListener('click', e => { if (e.target === m) closeModal(m.id); })
+  );
+
+  function showToast(msg, type = 'success') {
+    const c = document.getElementById('toast-container');
+    if (!c) return;
+    const t = document.createElement('div');
+    t.className = `toast-msg ${type}`;
+    t.innerHTML = `<i class="fas ${type === 'success' ? 'fa-circle-check' : 'fa-triangle-exclamation'}"></i> ${msg}`;
+    c.appendChild(t);
+    setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, 2800);
+  }
 </script>
 </body>
 </html>
