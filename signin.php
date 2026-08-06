@@ -4,6 +4,11 @@ require_once __DIR__ . '/db_connect.php';
 
 $error = '';
 $username = '';
+$successMessage = '';
+
+if (isset($_GET['signup']) && $_GET['signup'] === 'success') {
+    $successMessage = 'Admin account created successfully. You can now sign in.';
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = trim($_POST['username'] ?? '');
@@ -12,7 +17,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($username === '' || $password === '') {
         $error = 'Please enter both username and password.';
     } else {
-        $stmt = $conn->prepare('SELECT user_id, username, password, role, status FROM users WHERE username = ?');
+        $stmt = $conn->prepare('SELECT user_id, username, password, role FROM users WHERE username = ?');
         $stmt->bind_param('s', $username);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -22,16 +27,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // TEMPORARY: accepts both hashed and plain-text passwords while testing.
         // Later, remove the "|| $password === $user['password']" part to require hashed passwords only.
         if ($user && (password_verify($password, $user['password']) || $password === $user['password'])) {
-            if ($user['status'] === 'inactive') {
-                $error = 'This account has been deactivated. Contact the café owner.';
-            } else {
-                $_SESSION['user_id'] = $user['user_id'];
-                $_SESSION['username'] = $user['username'];
-                $_SESSION['role'] = $user['role'];
+            $_SESSION['user_id'] = $user['user_id'];
+            $_SESSION['username'] = $user['username'];
+            $_SESSION['role'] = $user['role'];
 
-                header('Location: ' . ($user['role'] === 'cafe owner' ? 'owner/dashboard.php' : 'staff/staffdashboard.php'));
-                exit;
-            }
+            header('Location: ' . ($user['role'] === 'cafe owner' ? 'owner/dashboard.php' : 'staff/staffdashboard.php'));
+            exit;
         } else {
             $error = 'Invalid username or password.';
         }
@@ -356,6 +357,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
         <?php endif; ?>
 
+        <?php if ($successMessage): ?>
+        <div style="background:#eaf7ee;color:#2e7d32;padding:10px 14px;border-radius:8px;margin-bottom:20px;font-size:14px;text-align:center;">
+            <?= htmlspecialchars($successMessage) ?>
+        </div>
+        <?php endif; ?>
+
         <form method="POST" action="signin.php">
             <div class="form-group">
                 <label class="form-label" for="username">Username</label>
@@ -387,7 +394,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <p style="color: var(--charcoal-mid); font-size: 14px; margin-bottom: 8px;">
                 Don't have an account?
             </p>
-            <a href="#" class="create-link">
+            <a href="signup.php" class="create-link">
                 Create Admin Account
             </a>
         </div>
