@@ -8,32 +8,32 @@ $username = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = trim($_POST['username'] ?? '');
     $password = trim($_POST['password'] ?? '');
+    $confirmPassword = trim($_POST['confirm_password'] ?? '');
 
-    if ($username === '' || $password === '') {
-        $error = 'Please enter both username and password.';
+    if ($username === '' || $password === '' || $confirmPassword === '') {
+        $error = 'Please fill in all fields.';
+    } elseif (strlen($password) < 8) {
+        $error = 'Password must be at least 8 characters long.';
+    } elseif ($password !== $confirmPassword) {
+        $error = 'Passwords do not match.';
     } else {
-        $stmt = $conn->prepare('SELECT user_id, username, password, role, status FROM users WHERE username = ?');
-        $stmt->bind_param('s', $username);
-        $stmt->execute();
-        $result = $stmt->get_result();
-        $user = $result->fetch_assoc();
-        $stmt->close();
+        $check = $conn->prepare('SELECT user_id FROM users WHERE username = ?');
+        $check->bind_param('s', $username);
+        $check->execute();
+        $exists = $check->get_result()->fetch_assoc();
+        $check->close();
 
-        // TEMPORARY: accepts both hashed and plain-text passwords while testing.
-        // Later, remove the "|| $password === $user['password']" part to require hashed passwords only.
-        if ($user && (password_verify($password, $user['password']) || $password === $user['password'])) {
-            if ($user['status'] === 'inactive') {
-                $error = 'This account has been deactivated. Contact the café owner.';
-            } else {
-                $_SESSION['user_id'] = $user['user_id'];
-                $_SESSION['username'] = $user['username'];
-                $_SESSION['role'] = $user['role'];
-
-                header('Location: ' . ($user['role'] === 'cafe owner' ? 'owner/dashboard.php' : 'staff/staffdashboard.php'));
-                exit;
-            }
+        if ($exists) {
+            $error = 'That username is already taken.';
         } else {
-            $error = 'Invalid username or password.';
+            $hashed = password_hash($password, PASSWORD_DEFAULT);
+            $insert = $conn->prepare("INSERT INTO users (username, password, role, status) VALUES (?, ?, 'cafe owner', 'active')");
+            $insert->bind_param('ss', $username, $hashed);
+            $insert->execute();
+            $insert->close();
+
+            header('Location: signin.php?created=1');
+            exit;
         }
     }
 }
@@ -44,7 +44,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Sign In | SmartStock — Bean There Café</title>
+    <title>Create Admin Account | SmartStock — Bean There Café</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" />
     <link
         href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap"
@@ -94,7 +94,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             overflow-x: hidden;
         }
 
-        .signin-container {
+        .signup-container {
             background: var(--cream-light);
             border: 1.5px solid var(--cream-dark);
             border-radius: var(--radius-lg);
@@ -106,7 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             overflow: hidden;
         }
 
-        .signin-container::before {
+        .signup-container::before {
             content: '';
             position: absolute;
             top: 0;
@@ -150,7 +150,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             letter-spacing: 1px;
         }
 
-        .signin-title {
+        .signup-title {
             font-family: var(--font-display);
             font-size: 22px;
             font-weight: 700;
@@ -159,7 +159,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             margin-bottom: 8px;
         }
 
-        .signin-subtitle {
+        .signup-subtitle {
             font-size: 14px;
             color: var(--charcoal-mid);
             text-align: center;
@@ -203,28 +203,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             color: #aaa;
         }
 
-        .remember-row {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            margin-bottom: 24px;
-        }
-
-        .remember-checkbox {
-            width: 18px;
-            height: 18px;
-            accent-color: var(--mocha);
-            cursor: pointer;
-        }
-
-        .remember-label {
-            font-size: 14px;
-            color: var(--charcoal);
-            cursor: pointer;
-            user-select: none;
-        }
-
-        .signin-btn {
+        .signup-btn {
             width: 100%;
             padding: 16px;
             background: var(--mocha);
@@ -240,65 +219,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             align-items: center;
             justify-content: center;
             gap: 8px;
-            position: relative;
-            overflow: hidden;
+            margin-top: 8px;
         }
 
-        .signin-btn:hover {
+        .signup-btn:hover {
             background: var(--mocha-mid);
             transform: translateY(-1px);
             box-shadow: var(--shadow-md);
         }
 
-        .signin-btn:active {
+        .signup-btn:active {
             transform: translateY(0);
         }
 
-        .links-row {
-            display: flex;
-            justify-content: space-between;
+        .back-account {
+            text-align: center;
             margin-top: 24px;
-            padding-top: 24px;
+            padding-top: 20px;
             border-top: 1px solid var(--cream-dark);
         }
 
-        .link {
-            font-size: 13px;
-            color: var(--mocha-mid);
+        .back-link {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--gold);
             text-decoration: none;
-            font-weight: 500;
-            transition: color 0.2s;
         }
 
-        .link:hover {
-            color: var(--mocha);
-        }
-
-        .divider {
-            text-align: center;
-            margin: 28px 0;
-            position: relative;
-            color: var(--charcoal-mid);
-        }
-
-        .divider::before {
-            content: '';
-            position: absolute;
-            top: 50%;
-            left: 0;
-            right: 0;
-            height: 1px;
-            background: var(--cream-dark);
-        }
-
-        .divider span {
-            background: var(--cream-light);
-            padding: 0 16px;
-            font-size: 13px;
+        .back-link:hover {
+            color: var(--gold-light);
+            text-decoration: underline;
         }
 
         @media (max-width: 480px) {
-            .signin-container {
+            .signup-container {
                 padding: 32px 24px;
                 margin: 10px;
             }
@@ -317,7 +271,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 </head>
 
 <body>
-    <main class="signin-container">
+    <main class="signup-container">
         <div class="brand-section">
             <div class="brand-logo">
                 <i class="fas fa-mug-hot"></i>
@@ -326,10 +280,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             <p class="brand-sub">Bean There Café</p>
         </div>
 
-        <div class="signin-title">
-            Welcome 
+        <div class="signup-title">
+            Create Admin Account
         </div>
-        
+        <p class="signup-subtitle">Set up a new cafe owner account</p>
 
         <?php if ($error): ?>
         <div style="background:#fdecea;color:#C0392B;padding:10px 14px;border-radius:8px;margin-bottom:20px;font-size:14px;text-align:center;">
@@ -337,37 +291,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
         <?php endif; ?>
 
-        <?php if (isset($_GET['created'])): ?>
-        <div style="background:rgba(122,158,126,.14);color:#4d7a52;padding:10px 14px;border-radius:8px;margin-bottom:20px;font-size:14px;text-align:center;">
-            Admin account created. You can now sign in.
-        </div>
-        <?php endif; ?>
-
-        <form method="POST" action="signin.php">
+        <form method="POST" action="signup.php">
             <div class="form-group">
                 <label class="form-label" for="username">Username</label>
-                <input type="text" name="username" id="username" class="form-input" placeholder="Enter your username" required value="<?= htmlspecialchars($username) ?>">
+                <input type="text" name="username" id="username" class="form-input" placeholder="Choose a username" required value="<?= htmlspecialchars($username) ?>">
             </div>
 
             <div class="form-group">
                 <label class="form-label" for="password">Password</label>
-                <input type="password" name="password" id="password" class="form-input" placeholder="Enter your password" required>
+                <input type="password" name="password" id="password" class="form-input" placeholder="Min. 8 characters" required minlength="8">
             </div>
 
-            <div class="remember-row">
-                <input type="checkbox" id="remember" class="remember-checkbox">
-                <label for="remember" class="remember-label">Remember me</label>
+            <div class="form-group">
+                <label class="form-label" for="confirm_password">Confirm Password</label>
+                <input type="password" name="confirm_password" id="confirm_password" class="form-input" placeholder="Re-enter password" required minlength="8">
             </div>
 
-            <button type="submit" class="signin-btn">
-                <i class="fas fa-arrow-right"></i>
-                Sign In
+            <button type="submit" class="signup-btn">
+                <i class="fas fa-user-plus"></i>
+                Create Account
             </button>
         </form>
 
-        <div class="links-row">
-            <a href="#" class="link">Forgot Password?</a>
-            <a href="#" class="link">Need Help?</a>
+        <div class="back-account">
+            <a href="signin.php" class="back-link">
+                <i class="fas fa-arrow-left" style="margin-right:6px;"></i>Back to Sign In
+            </a>
         </div>
     </main>
 </body>
