@@ -1199,7 +1199,7 @@ $initialReport = build_staff_sales_report($conn, $staffUserId, 'daily', 0, $toda
     <a href="staff_products.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Products</a>
     <a href="staff_reports.php" class="nav-item active"><i class="fas fa-chart-bar"></i> Sales Report</a>
     <hr class="sidebar-divider" />
-    <div class="sidebar-section-label">Settings</div>
+    
     
   </nav>
 

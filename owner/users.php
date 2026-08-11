@@ -73,6 +73,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $msg = 'Account updated successfully.';
             }
         }
+    } elseif ($action === 'delete') {
+        $targetId = (int)($_POST['user_id'] ?? 0);
+
+        if ($targetId === (int)($_SESSION['user_id'] ?? 0)) {
+            $msg = 'You cannot delete your own account.';
+            $msgType = 'warn';
+        } else {
+            $delete = $conn->prepare('DELETE FROM users WHERE user_id = ?');
+            $delete->bind_param('i', $targetId);
+            $delete->execute();
+            $delete->close();
+            $msg = 'Account deleted.';
+        }
     } elseif ($action === 'toggle_status') {
         $targetId = (int)($_POST['user_id'] ?? 0);
         $newStatus = $_POST['new_status'] ?? '';
@@ -103,7 +116,7 @@ $displayName = $_SESSION['username'] ?? 'Owner';
 $initials = strtoupper(substr($displayName, 0, 2));
 
 $users = [];
-$result = $conn->query('SELECT user_id, username, role, status FROM users ORDER BY user_id');
+$result = $conn->query('SELECT user_id, username, role, status, created_timestamp FROM users ORDER BY user_id');
 while ($row = $result->fetch_assoc()) {
     $users[] = $row;
 }
@@ -1237,6 +1250,7 @@ while ($row = $result->fetch_assoc()) {
               <th>Username</th>
               <th>Role</th>
               <th>Status</th>
+              <th>Created</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -1255,6 +1269,7 @@ while ($row = $result->fetch_assoc()) {
                 <td class="text-mono"><?= htmlspecialchars($u['username']) ?></td>
                 <td><span class="status-pill <?= $rolePillClass ?>"><?= $roleLabel ?></span></td>
                 <td><span class="status-pill <?= $statusPillClass ?>"><?= $statusLabel ?></span></td>
+                <td class="text-mono"><?= htmlspecialchars(date('M j, Y', strtotime($u['created_timestamp']))) ?></td>
                 <td style="display:flex;gap:6px;align-items:center;">
                   <button class="tbl-btn tbl-btn-edit"
                     onclick="openEditModal(<?= (int)$u['user_id'] ?>, '<?= htmlspecialchars($u['username'], ENT_QUOTES) ?>', '<?= $u['role'] ?>')">Edit</button>
@@ -1264,6 +1279,12 @@ while ($row = $result->fetch_assoc()) {
                       <input type="hidden" name="user_id" value="<?= (int)$u['user_id'] ?>">
                       <input type="hidden" name="new_status" value="<?= $nextStatus ?>">
                       <button type="submit" class="tbl-btn <?= $toggleClass ?>"><?= $toggleLabel ?></button>
+                    </form>
+                    <form method="POST" action="users.php" style="display:contents;"
+                      onsubmit="return confirm('Permanently delete the account &quot;<?= htmlspecialchars($u['username'], ENT_QUOTES) ?>&quot;? This cannot be undone.');">
+                      <input type="hidden" name="action" value="delete">
+                      <input type="hidden" name="user_id" value="<?= (int)$u['user_id'] ?>">
+                      <button type="submit" class="tbl-btn tbl-btn-del">Delete</button>
                     </form>
                   <?php endif; ?>
                 </td>

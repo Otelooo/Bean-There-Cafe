@@ -22,7 +22,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         exit;
     }
 
-    $quantities = [];
+    // Each cart line is its own product+flavor combination, so the same product can appear
+    // more than once (e.g. two orders of Fries with different flavors chosen).
+    $cartLines = [];
+    $totalQtyByProduct = [];
     foreach ($rawCart as $line) {
         $pid = (int)($line['id'] ?? 0);
         $qty = (int)($line['qty'] ?? 0);
@@ -30,15 +33,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
             echo json_encode(['success' => false, 'error' => 'Invalid cart item.']);
             exit;
         }
-        $quantities[$pid] = $qty;
+        $flavorRaw = $line['flavor_ingredient_id'] ?? null;
+        $flavorId = ($flavorRaw !== null && $flavorRaw !== '') ? (int)$flavorRaw : null;
+        $cartLines[] = ['product_id' => $pid, 'qty' => $qty, 'flavor_ingredient_id' => $flavorId];
+        $totalQtyByProduct[$pid] = ($totalQtyByProduct[$pid] ?? 0) + $qty;
     }
 
     $conn->begin_transaction();
     try {
-        $ids = array_keys($quantities);
+        $ids = array_keys($totalQtyByProduct);
         $placeholders = implode(',', array_fill(0, count($ids), '?'));
         $types = str_repeat('i', count($ids));
-        $stmt = $conn->prepare("SELECT product_id, product_name, product_selling_price, product_stocks FROM products WHERE product_id IN ($placeholders) FOR UPDATE");
+        $stmt = $conn->prepare("SELECT product_id, product_name, product_selling_price, product_stocks, product_type FROM products WHERE product_id IN ($placeholders) FOR UPDATE");
         $stmt->bind_param($types, ...$ids);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -48,37 +54,83 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         }
         $stmt->close();
 
-        if (count($productsById) !== count($quantities)) {
+        if (count($productsById) !== count($totalQtyByProduct)) {
             throw new RuntimeException('One or more items are no longer available.');
         }
 
-        $grossTotal = 0.0;
-        $lineItems = [];
-        foreach ($quantities as $pid => $qty) {
+        foreach ($totalQtyByProduct as $pid => $totalQty) {
             $product = $productsById[$pid];
-            if ((int)$product['product_stocks'] < $qty) {
+            // Made-to-order products have no product_stocks of their own — availability is governed
+            // entirely by the ingredient stock check below.
+            if ($product['product_type'] !== 'made_to_order' && (int)$product['product_stocks'] < $totalQty) {
                 throw new RuntimeException('Not enough stock for ' . $product['product_name'] . '.');
             }
-            $unitPrice = (float)$product['product_selling_price'];
-            $subtotal = $unitPrice * $qty;
-            $grossTotal += $subtotal;
-            $lineItems[] = ['product_id' => $pid, 'quantity' => $qty, 'unit_price' => $unitPrice, 'subtotal' => $subtotal];
         }
 
-        // Aggregate ingredient requirements across the whole cart from each product's recipe
-        $ingredientNeeds = [];
-        $recipeStmt = $conn->prepare('SELECT product_ingredients_id, quantity FROM product_ingredient_items WHERE product_id = ?');
-        foreach ($quantities as $pid => $qty) {
+        // Load each cart product's recipe once: required ingredients (always consumed) and
+        // flavor-choice options (exactly one consumed — whichever the cashier picked).
+        $recipeByProduct = [];
+        $recipeStmt = $conn->prepare('
+            SELECT pii.product_id, pii.product_ingredients_id, pii.quantity, pii.is_flavor_choice, pi.ingredient_name
+            FROM product_ingredient_items pii
+            JOIN product_ingredients pi ON pi.product_ingredients_id = pii.product_ingredients_id
+            WHERE pii.product_id = ?
+        ');
+        foreach ($totalQtyByProduct as $pid => $ignoredTotalQty) {
             $recipeStmt->bind_param('i', $pid);
             $recipeStmt->execute();
             $recipeResult = $recipeStmt->get_result();
-            while ($recipeRow = $recipeResult->fetch_assoc()) {
-                $ingId = (int)$recipeRow['product_ingredients_id'];
-                $needed = (float)$recipeRow['quantity'] * $qty;
-                $ingredientNeeds[$ingId] = ($ingredientNeeds[$ingId] ?? 0) + $needed;
+            while ($row = $recipeResult->fetch_assoc()) {
+                $recipeByProduct[$pid][] = [
+                    'ingredient_id' => (int)$row['product_ingredients_id'],
+                    'ingredient_name' => $row['ingredient_name'],
+                    'quantity' => (float)$row['quantity'],
+                    'is_choice' => (bool)$row['is_flavor_choice'],
+                ];
             }
         }
         $recipeStmt->close();
+
+        $ingredientNeeds = [];
+        $grossTotal = 0.0;
+        $lineItems = [];
+        foreach ($cartLines as $line) {
+            $pid = $line['product_id'];
+            $qty = $line['qty'];
+            $product = $productsById[$pid];
+            $unitPrice = (float)$product['product_selling_price'];
+            $subtotal = $unitPrice * $qty;
+            $grossTotal += $subtotal;
+
+            $chosenIngredientName = null;
+            $hasChoiceGroup = false;
+            foreach ($recipeByProduct[$pid] ?? [] as $r) {
+                if (!$r['is_choice']) {
+                    $needed = $r['quantity'] * $qty;
+                    $ingredientNeeds[$r['ingredient_id']] = ($ingredientNeeds[$r['ingredient_id']] ?? 0) + $needed;
+                    continue;
+                }
+                $hasChoiceGroup = true;
+                if ($r['ingredient_id'] === $line['flavor_ingredient_id']) {
+                    $needed = $r['quantity'] * $qty;
+                    $ingredientNeeds[$r['ingredient_id']] = ($ingredientNeeds[$r['ingredient_id']] ?? 0) + $needed;
+                    $chosenIngredientName = $r['ingredient_name'];
+                }
+            }
+
+            if ($hasChoiceGroup && $chosenIngredientName === null) {
+                throw new RuntimeException('Please choose a flavor for ' . $product['product_name'] . '.');
+            }
+
+            $lineItems[] = [
+                'product_id' => $pid,
+                'product_name' => $product['product_name'],
+                'quantity' => $qty,
+                'unit_price' => $unitPrice,
+                'subtotal' => $subtotal,
+                'chosen_ingredient_name' => $chosenIngredientName,
+            ];
+        }
 
         if ($ingredientNeeds) {
             $ingIds = array_keys($ingredientNeeds);
@@ -107,16 +159,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         $finalTotal = round($grossTotal - $discountAmount, 2);
 
         $userId = (int)$_SESSION['user_id'];
-        $insertTxn = $conn->prepare("INSERT INTO transactions (user_id, transaction_date, transaction_total, transaction_status, payment_method, discount) VALUES (?, NOW(), ?, 'completed', ?, ?)");
-        $insertTxn->bind_param('idsd', $userId, $finalTotal, $paymentMethod, $discountAmount);
+        $cashierUsername = $_SESSION['username'] ?? '';
+        $insertTxn = $conn->prepare("INSERT INTO transactions (user_id, cashier_username, transaction_date, transaction_total, transaction_status, payment_method, discount) VALUES (?, ?, NOW(), ?, 'completed', ?, ?)");
+        $insertTxn->bind_param('isdsd', $userId, $cashierUsername, $finalTotal, $paymentMethod, $discountAmount);
         $insertTxn->execute();
         $transactionId = $insertTxn->insert_id;
         $insertTxn->close();
 
-        $insertItem = $conn->prepare('INSERT INTO transaction_items (transaction_id, product_id, quantity, unit_price, subtotal) VALUES (?, ?, ?, ?, ?)');
-        $updateStock = $conn->prepare('UPDATE products SET product_stocks = product_stocks - ? WHERE product_id = ?');
+        // product_name_snapshot / chosen_ingredient_name_snapshot preserve what was actually sold
+        // even if the product or ingredient is deleted later.
+        $insertItem = $conn->prepare('INSERT INTO transaction_items (transaction_id, product_id, product_name_snapshot, chosen_ingredient_name_snapshot, quantity, unit_price, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?)');
+        // Only "prepared" products track their own stock; made-to-order items have no product_stocks to decrement.
+        $updateStock = $conn->prepare("UPDATE products SET product_stocks = product_stocks - ? WHERE product_id = ? AND product_type = 'prepared'");
         foreach ($lineItems as $item) {
-            $insertItem->bind_param('iiidd', $transactionId, $item['product_id'], $item['quantity'], $item['unit_price'], $item['subtotal']);
+            $insertItem->bind_param('iissidd', $transactionId, $item['product_id'], $item['product_name'], $item['chosen_ingredient_name'], $item['quantity'], $item['unit_price'], $item['subtotal']);
             $insertItem->execute();
 
             $updateStock->bind_param('ii', $item['quantity'], $item['product_id']);
@@ -158,22 +214,43 @@ while ($row = $catResult->fetch_assoc()) {
     $categories[] = $row;
 }
 
+// Flavor-choice ingredient options per product (e.g. Fries: Cheese Powder / BBQ / Sour Cream) —
+// the cashier picks exactly one of these at add-to-cart time; everything else on the recipe is
+// always included.
+$flavorOptionsByProduct = [];
+$flavorResult = $conn->query('
+    SELECT pii.product_id, pi.product_ingredients_id, pi.ingredient_name
+    FROM product_ingredient_items pii
+    JOIN product_ingredients pi ON pi.product_ingredients_id = pii.product_ingredients_id
+    WHERE pii.is_flavor_choice = 1
+    ORDER BY pi.ingredient_name
+');
+while ($row = $flavorResult->fetch_assoc()) {
+    $flavorOptionsByProduct[(int)$row['product_id']][] = [
+        'id' => (int)$row['product_ingredients_id'],
+        'name' => $row['ingredient_name'],
+    ];
+}
+
 $products = [];
 $prodResult = $conn->query('
-    SELECT p.product_id, p.product_name, p.product_selling_price, p.product_stocks, p.product_category_id, pc.product_category, p.product_image
+    SELECT p.product_id, p.product_name, p.product_selling_price, p.product_stocks, p.product_category_id, pc.product_category, p.product_image, p.product_type
     FROM products p
     JOIN product_category pc ON pc.product_category_id = p.product_category_id
     ORDER BY pc.product_category, p.product_name
 ');
 while ($row = $prodResult->fetch_assoc()) {
+    $pid = (int)$row['product_id'];
     $products[] = [
-        'id' => (int)$row['product_id'],
+        'id' => $pid,
         'name' => $row['product_name'],
         'price' => (float)$row['product_selling_price'],
         'stock' => (int)$row['product_stocks'],
+        'type' => $row['product_type'],
         'category_id' => (int)$row['product_category_id'],
         'category_name' => $row['product_category'],
         'image' => $row['product_image'] ? '../' . $row['product_image'] : null,
+        'flavor_options' => $flavorOptionsByProduct[$pid] ?? [],
     ];
 }
 ?>
@@ -579,14 +656,6 @@ while ($row = $prodResult->fetch_assoc()) {
     }
 
     /* ── PRODUCTS ── */
-    .products-section {
-      background: var(--cream);
-      border: 1.5px solid var(--cream-dark);
-      border-radius: var(--radius-lg);
-      padding: 24px;
-      box-shadow: var(--shadow-sm);
-    }
-
     .section-header {
       margin-bottom: 20px;
     }
@@ -602,6 +671,7 @@ while ($row = $prodResult->fetch_assoc()) {
 
     .category-tabs {
       display: flex;
+      flex-wrap: wrap;
       gap: 8px;
       margin-bottom: 20px;
     }
@@ -1147,7 +1217,6 @@ while ($row = $prodResult->fetch_assoc()) {
     <a href="staff_products.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Products</a>
     <a href="staff_reports.php" class="nav-item"><i class="fas fa-chart-bar"></i>Sales Report</a>
     <hr class="sidebar-divider" />
-    <div class="sidebar-section-label">Settings</div>
     
     <div class="sidebar-footer">
       <p>SmartStock v1.0<br />Bean There Café</p>
@@ -1167,7 +1236,7 @@ while ($row = $prodResult->fetch_assoc()) {
     </div>
     <div style="padding:22px 26px;">
       <main class="pos-main">
-        <section class="products-section">
+        <section>
           <div class="section-header">
             <h1 class="section-title">
               <i class="fas fa-mug-hot" style="color: var(--gold);"></i>Menu Items
@@ -1198,6 +1267,19 @@ while ($row = $prodResult->fetch_assoc()) {
           </div>
         </section>
       </main>
+      <div id="flavor-choice-modal" class="modal-overlay">
+        <div class="modal-box" style="max-width: 360px;">
+          <div class="modal-header">
+            <h2 class="modal-title" id="flavor-choice-title">Choose a flavor</h2>
+            <button class="modal-close" onclick="closeFlavorPicker()">&times;</button>
+          </div>
+          <div id="flavor-choice-list" style="margin: 16px 0;"></div>
+          <div class="modal-actions">
+            <button class="btn-cancel" onclick="closeFlavorPicker()">Cancel</button>
+            <button class="btn-confirm" onclick="confirmFlavorChoice()">Add to Cart</button>
+          </div>
+        </div>
+      </div>
       <div id="receipt-modal" class="modal-overlay">
         <div class="modal-box" style="max-width: 400px; border: 2px dashed var(--cream-dark);">
           <div style="text-align: center; margin-bottom: 20px;">
@@ -1342,12 +1424,15 @@ while ($row = $prodResult->fetch_assoc()) {
           }
 
           productsGrid.innerHTML = filtered.map(p => {
-            const outOfStock = p.stock <= 0;
+            // Made-to-order items aren't tracked by product_stocks — availability depends on ingredient
+            // stock instead, which is checked server-side at checkout.
+            const isMotd = p.type === 'made_to_order';
+            const outOfStock = !isMotd && p.stock <= 0;
             return `<button class="product-btn" data-product-id="${p.id}" ${outOfStock ? 'disabled style="opacity:.5;cursor:not-allowed;"' : ''}>
           <div class="product-icon">${p.image ? `<img src="${p.image}" alt="">` : iconFor(p.category_name)}</div>
           <div class="product-name">${p.name}</div>
           <div class="product-price">₱${p.price.toLocaleString()}</div>
-          <div style="font-size:11px;color:${outOfStock ? 'var(--red-soft)' : '#aaa'};margin-top:4px;">${outOfStock ? 'Out of stock' : p.stock + ' in stock'}</div>
+          <div style="font-size:11px;color:${outOfStock ? 'var(--red-soft)' : '#aaa'};margin-top:4px;">${isMotd ? 'Made to order' : (outOfStock ? 'Out of stock' : p.stock + ' in stock')}</div>
         </button>`;
           }).join('');
 
@@ -1360,30 +1445,68 @@ while ($row = $prodResult->fetch_assoc()) {
           el.classList.add('active');
           renderProducts(cat);
         }
+        let pendingFlavorProduct = null;
         function addToCart(id) {
           const product = products.find(p => p.id === id);
-          if (!product || product.stock <= 0) return;
-          const item = cart.find(i => i.id === id);
+          if (!product) return;
+          const isMotd = product.type === 'made_to_order';
+          if (!isMotd && product.stock <= 0) return;
+
+          if (product.flavor_options && product.flavor_options.length > 0) {
+            openFlavorPicker(product);
+            return;
+          }
+          addToCartFinal(product, null, null);
+        }
+        function openFlavorPicker(product) {
+          pendingFlavorProduct = product;
+          document.getElementById('flavor-choice-title').textContent = 'Choose a flavor for ' + product.name;
+          document.getElementById('flavor-choice-list').innerHTML = product.flavor_options.map((opt, i) => `
+      <label style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--cream-dark);cursor:pointer;font-size:14px;">
+        <input type="radio" name="flavor-choice" value="${opt.id}" ${i === 0 ? 'checked' : ''} />
+        <span>${opt.name}</span>
+      </label>
+    `).join('');
+          document.getElementById('flavor-choice-modal').classList.add('show');
+        }
+        function closeFlavorPicker() {
+          document.getElementById('flavor-choice-modal').classList.remove('show');
+          pendingFlavorProduct = null;
+        }
+        function confirmFlavorChoice() {
+          const selected = document.querySelector('input[name="flavor-choice"]:checked');
+          if (!selected || !pendingFlavorProduct) return;
+          const opt = pendingFlavorProduct.flavor_options.find(o => String(o.id) === selected.value);
+          if (!opt) return;
+          addToCartFinal(pendingFlavorProduct, opt.id, opt.name);
+          closeFlavorPicker();
+        }
+        function addToCartFinal(product, flavorId, flavorName) {
+          const isMotd = product.type === 'made_to_order';
+          // A product sold with different flavors needs separate cart lines so quantities and
+          // stock checks don't get mixed between flavors.
+          const cartKey = flavorId ? `${product.id}:${flavorId}` : String(product.id);
+          const item = cart.find(i => i.cartKey === cartKey);
           const currentQty = item ? item.qty : 0;
-          if (currentQty >= product.stock) {
+          if (!isMotd && currentQty >= product.stock) {
             showToast(`Only ${product.stock} unit(s) of ${product.name} available.`, 'warn');
             return;
           }
           if (item) item.qty++;
-          else cart.push({ ...product, qty: 1 });
+          else cart.push({ ...product, qty: 1, cartKey, flavor_ingredient_id: flavorId, flavor_name: flavorName });
           renderCart();
           updateBadge();
         }
-        function updateQty(id, delta) {
-          const item = cart.find(i => i.id === id);
+        function updateQty(cartKey, delta) {
+          const item = cart.find(i => i.cartKey === cartKey);
           if (!item) return;
-          const product = products.find(p => p.id === id);
-          if (delta > 0 && product && item.qty >= product.stock) {
+          const product = products.find(p => p.id === item.id);
+          if (delta > 0 && product && product.type !== 'made_to_order' && item.qty >= product.stock) {
             showToast(`Only ${product.stock} unit(s) of ${product.name} available.`, 'warn');
             return;
           }
           item.qty += delta;
-          if (item.qty <= 0) cart = cart.filter(i => i.id !== id);
+          if (item.qty <= 0) cart = cart.filter(i => i.cartKey !== cartKey);
           renderCart();
           updateBadge();
         }
@@ -1406,15 +1529,15 @@ while ($row = $prodResult->fetch_assoc()) {
       <div class="cart-item">
         <div class="item-left">
           <div class="item-details">
-            <div class="item-name">${item.name}</div>
+            <div class="item-name">${item.name}${item.flavor_name ? ` <span style="color:#aaa;font-weight:400;">(${item.flavor_name})</span>` : ''}</div>
             <div class="item-qty-price">₱${item.price.toLocaleString()} each</div>
           </div>
         </div>
         <div style="display: flex; align-items: center; gap: 12px;">
           <div class="qty-controls">
-            <button class="qty-btn" onclick="updateQty(${item.id}, -1)">−</button>
+            <button class="qty-btn" onclick="updateQty('${item.cartKey}', -1)">−</button>
             <div class="qty-display">${item.qty}</div>
-            <button class="qty-btn" onclick="updateQty(${item.id}, 1)">+</button>
+            <button class="qty-btn" onclick="updateQty('${item.cartKey}', 1)">+</button>
           </div>
           <div class="item-total">₱${total.toLocaleString()}</div>
         </div>
@@ -1490,7 +1613,7 @@ while ($row = $prodResult->fetch_assoc()) {
           document.getElementById('order-items').innerHTML = cart.map(item => {
             const total = item.price * item.qty;
             return `<div class="order-item">
-          <span>${item.name} × ${item.qty}</span>
+          <span>${item.name}${item.flavor_name ? ' (' + item.flavor_name + ')' : ''} × ${item.qty}</span>
           <span>₱${total.toLocaleString()}</span>
         </div>`;
           }).join('');
@@ -1576,7 +1699,7 @@ while ($row = $prodResult->fetch_assoc()) {
               headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
               body: new URLSearchParams({
                 action: 'checkout',
-                cart: JSON.stringify(cart.map(i => ({ id: i.id, qty: i.qty }))),
+                cart: JSON.stringify(cart.map(i => ({ id: i.id, qty: i.qty, flavor_ingredient_id: i.flavor_ingredient_id || null }))),
                 payment_method: paymentMethod,
                 discount: hasDiscount ? '1' : ''
               })
@@ -1602,7 +1725,7 @@ while ($row = $prodResult->fetch_assoc()) {
 
           const itemsHtml = cart.map(i => `
     <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-      <span>${i.name} x${i.qty}</span>
+      <span>${i.name}${i.flavor_name ? ' (' + i.flavor_name + ')' : ''} x${i.qty}</span>
       <span>₱${(i.price * i.qty).toLocaleString()}</span>
     </div>
   `).join('');
