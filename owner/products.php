@@ -8,29 +8,8 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'cafe owner') {
     exit;
 }
 
-function resolve_category_id(mysqli $conn, string $categorySelect, string $newCategoryName): int
+function resolve_category_id(mysqli $conn, string $categorySelect): int
 {
-    if ($categorySelect === 'new') {
-        $name = trim($newCategoryName);
-        if ($name === '') {
-            throw new RuntimeException('Please enter a name for the new category.');
-        }
-        $check = $conn->prepare('SELECT product_category_id FROM product_category WHERE product_category = ?');
-        $check->bind_param('s', $name);
-        $check->execute();
-        $existing = $check->get_result()->fetch_assoc();
-        $check->close();
-        if ($existing) {
-            return (int)$existing['product_category_id'];
-        }
-        $insert = $conn->prepare('INSERT INTO product_category (product_category) VALUES (?)');
-        $insert->bind_param('s', $name);
-        $insert->execute();
-        $id = (int)$insert->insert_id;
-        $insert->close();
-        return $id;
-    }
-
     $id = (int)$categorySelect;
     if ($id <= 0) {
         throw new RuntimeException('Please choose a category.');
@@ -44,6 +23,103 @@ function resolve_category_id(mysqli $conn, string $categorySelect, string $newCa
         throw new RuntimeException('Selected category no longer exists.');
     }
     return $id;
+}
+
+// Normalizes a user-typed category name to Title Case (e.g. "pasta" / "PASTA" -> "Pasta")
+// so categories display consistently no matter how the owner/staff typed them in.
+function format_category_name(string $raw): string
+{
+    return mb_convert_case(trim($raw), MB_CASE_TITLE, 'UTF-8');
+}
+
+// Made-to-order products don't have a real supplier (they're assembled in-house from ingredients),
+// but product_supplier_id is a required column, so we point every made-to-order product at one shared row.
+function resolve_inhouse_supplier_id(mysqli $conn): int
+{
+    $name = 'In-house';
+    $check = $conn->prepare('SELECT product_supplier_id FROM product_supplier WHERE supplier_name = ?');
+    $check->bind_param('s', $name);
+    $check->execute();
+    $existing = $check->get_result()->fetch_assoc();
+    $check->close();
+    if ($existing) {
+        return (int)$existing['product_supplier_id'];
+    }
+
+    $contact = '—';
+    $insert = $conn->prepare('INSERT INTO product_supplier (supplier_name, supplier_contact) VALUES (?, ?)');
+    $insert->bind_param('ss', $name, $contact);
+    $insert->execute();
+    $id = (int)$insert->insert_id;
+    $insert->close();
+    return $id;
+}
+
+// Deleting a category shouldn't be blocked by products still using it — they get moved here instead.
+function resolve_uncategorized_category_id(mysqli $conn): int
+{
+    $name = 'Uncategorized';
+    $check = $conn->prepare('SELECT product_category_id FROM product_category WHERE product_category = ?');
+    $check->bind_param('s', $name);
+    $check->execute();
+    $existing = $check->get_result()->fetch_assoc();
+    $check->close();
+    if ($existing) {
+        return (int)$existing['product_category_id'];
+    }
+
+    $insert = $conn->prepare('INSERT INTO product_category (product_category) VALUES (?)');
+    $insert->bind_param('s', $name);
+    $insert->execute();
+    $id = (int)$insert->insert_id;
+    $insert->close();
+    return $id;
+}
+
+// Replaces a product's recipe with whatever ingredient rows were submitted on the Add/Edit form.
+// A "prepared" product always ends up with no recipe rows, since only made-to-order items consume ingredients.
+// $units holds the display unit chosen per row (e.g. "Tablespoon"); it's purely a label —
+// stock deduction at checkout always works in the ingredient's own inventory unit/quantity,
+// so an unset/blank choice just falls back to that ingredient's inventory unit.
+// $choiceFlags marks a row as a flavor-choice option (e.g. Cheese Powder vs BBQ vs Sour Cream) —
+// at checkout, exactly one option from that group gets consumed instead of all of them. Rows not
+// marked are always-required ingredients (e.g. potatoes, oil), consumed on every sale as before.
+function save_product_recipe(mysqli $conn, int $productId, string $productType, array $ingredientIds, array $quantities, array $units = [], array $choiceFlags = []): void
+{
+    $del = $conn->prepare('DELETE FROM product_ingredient_items WHERE product_id = ?');
+    $del->bind_param('i', $productId);
+    $del->execute();
+    $del->close();
+
+    if ($productType !== 'made_to_order') {
+        return;
+    }
+
+    $ins = $conn->prepare('INSERT INTO product_ingredient_items (product_id, product_ingredients_id, quantity, unit, is_flavor_choice) VALUES (?, ?, ?, ?, ?)');
+    $checkStmt = $conn->prepare('SELECT ingredient_unit FROM product_ingredients WHERE product_ingredients_id = ?');
+
+    foreach ($ingredientIds as $i => $rawIngredientId) {
+        $ingredientId = (int)$rawIngredientId;
+        $qty = (float)($quantities[$i] ?? 0);
+        if ($ingredientId <= 0 || $qty <= 0) {
+            continue;
+        }
+        $checkStmt->bind_param('i', $ingredientId);
+        $checkStmt->execute();
+        $ingredientRow = $checkStmt->get_result()->fetch_assoc();
+        if (!$ingredientRow) {
+            continue;
+        }
+        $unit = trim($units[$i] ?? '');
+        if ($unit === '') {
+            $unit = $ingredientRow['ingredient_unit'];
+        }
+        $isChoice = !empty($choiceFlags[$i]) ? 1 : 0;
+        $ins->bind_param('iidsi', $productId, $ingredientId, $qty, $unit, $isChoice);
+        $ins->execute();
+    }
+    $ins->close();
+    $checkStmt->close();
 }
 
 function resolve_supplier_id(mysqli $conn, string $supplierName, string $supplierContact): int
@@ -130,27 +206,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'add' || $action === 'edit') {
         $name = trim($_POST['name'] ?? '');
+        $productType = $_POST['product_type'] ?? '';
+        $price = $_POST['price'] ?? '';
+        $isPrepared = $productType === 'prepared';
         $stock = $_POST['stock'] ?? '';
         $cost = $_POST['cost'] ?? '';
-        $price = $_POST['price'] ?? '';
 
-        if ($name === '' || !is_numeric($stock) || (int)$stock < 0 || !is_numeric($cost) || (float)$cost < 0 || !is_numeric($price) || (float)$price < 0) {
+        if (!in_array($productType, ['made_to_order', 'prepared'], true)) {
+            $msg = 'Please choose a product type.';
+            $msgType = 'warn';
+        } elseif ($name === '' || !is_numeric($price) || (float)$price < 0) {
+            $msg = 'Please fill in all product fields with valid values.';
+            $msgType = 'warn';
+        } elseif ($isPrepared && (!is_numeric($stock) || (int)$stock < 0 || !is_numeric($cost) || (float)$cost < 0)) {
             $msg = 'Please fill in all product fields with valid values.';
             $msgType = 'warn';
         } else {
             try {
-                $categoryId = resolve_category_id($conn, $_POST['category'] ?? '', $_POST['new_category_name'] ?? '');
-                $supplierId = resolve_supplier_id($conn, $_POST['supplier_name'] ?? '', $_POST['supplier_contact'] ?? '');
-                $stockInt = (int)$stock;
-                $costVal = (float)$cost;
+                $categoryId = resolve_category_id($conn, $_POST['category'] ?? '');
                 $priceVal = (float)$price;
                 $newImagePath = handle_product_image_upload($_FILES['product_image'] ?? null);
 
+                if ($isPrepared) {
+                    $stockInt = (int)$stock;
+                    $costVal = (float)$cost;
+                    $supplierId = resolve_supplier_id($conn, $_POST['supplier_name'] ?? '', $_POST['supplier_contact'] ?? '');
+                } else {
+                    $stockInt = null;
+                    $costVal = 0.00;
+                    $supplierId = resolve_inhouse_supplier_id($conn);
+                }
+
                 if ($action === 'add') {
-                    $stmt = $conn->prepare("INSERT INTO products (product_name, product_category_id, product_stocks, product_cost, product_selling_price, product_supplier_id, product_type, product_image) VALUES (?, ?, ?, ?, ?, ?, 'prepared', ?)");
-                    $stmt->bind_param('siiddis', $name, $categoryId, $stockInt, $costVal, $priceVal, $supplierId, $newImagePath);
+                    $stmt = $conn->prepare('INSERT INTO products (product_name, product_category_id, product_stocks, product_cost, product_selling_price, product_supplier_id, product_type, product_image) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+                    $stmt->bind_param('siiddiss', $name, $categoryId, $stockInt, $costVal, $priceVal, $supplierId, $productType, $newImagePath);
                     $stmt->execute();
+                    $newProductId = (int)$stmt->insert_id;
                     $stmt->close();
+
+                    save_product_recipe($conn, $newProductId, $productType, $_POST['ingredient_id'] ?? [], $_POST['ingredient_qty'] ?? [], $_POST['ingredient_unit'] ?? [], $_POST['ingredient_is_choice'] ?? []);
                     $msg = 'Product added.';
                 } else {
                     $productId = (int)($_POST['product_id'] ?? 0);
@@ -165,23 +259,92 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $oldImage = $oldStmt->get_result()->fetch_assoc()['product_image'] ?? null;
                         $oldStmt->close();
 
-                        $stmt = $conn->prepare('UPDATE products SET product_name = ?, product_category_id = ?, product_stocks = ?, product_cost = ?, product_selling_price = ?, product_supplier_id = ?, product_image = ? WHERE product_id = ?');
-                        $stmt->bind_param('siiddisi', $name, $categoryId, $stockInt, $costVal, $priceVal, $supplierId, $newImagePath, $productId);
+                        $stmt = $conn->prepare('UPDATE products SET product_name = ?, product_category_id = ?, product_stocks = ?, product_cost = ?, product_selling_price = ?, product_supplier_id = ?, product_type = ?, product_image = ? WHERE product_id = ?');
+                        $stmt->bind_param('siiddissi', $name, $categoryId, $stockInt, $costVal, $priceVal, $supplierId, $productType, $newImagePath, $productId);
                         $stmt->execute();
                         $stmt->close();
                         delete_product_image_file($oldImage);
                     } else {
-                        $stmt = $conn->prepare('UPDATE products SET product_name = ?, product_category_id = ?, product_stocks = ?, product_cost = ?, product_selling_price = ?, product_supplier_id = ? WHERE product_id = ?');
-                        $stmt->bind_param('siiddii', $name, $categoryId, $stockInt, $costVal, $priceVal, $supplierId, $productId);
+                        $stmt = $conn->prepare('UPDATE products SET product_name = ?, product_category_id = ?, product_stocks = ?, product_cost = ?, product_selling_price = ?, product_supplier_id = ?, product_type = ? WHERE product_id = ?');
+                        $stmt->bind_param('siiddisi', $name, $categoryId, $stockInt, $costVal, $priceVal, $supplierId, $productType, $productId);
                         $stmt->execute();
                         $stmt->close();
                     }
+
+                    save_product_recipe($conn, $productId, $productType, $_POST['ingredient_id'] ?? [], $_POST['ingredient_qty'] ?? [], $_POST['ingredient_unit'] ?? [], $_POST['ingredient_is_choice'] ?? []);
                     $msg = 'Product updated.';
                 }
             } catch (Throwable $e) {
                 $msg = $e->getMessage();
                 $msgType = 'warn';
             }
+        }
+    } elseif ($action === 'add_category') {
+        $categoryName = format_category_name($_POST['category_name'] ?? '');
+        if ($categoryName === '') {
+            $msg = 'Please enter a category name.';
+            $msgType = 'warn';
+        } else {
+            $check = $conn->prepare('SELECT product_category_id FROM product_category WHERE LOWER(product_category) = LOWER(?)');
+            $check->bind_param('s', $categoryName);
+            $check->execute();
+            $existing = $check->get_result()->fetch_assoc();
+            $check->close();
+
+            if ($existing) {
+                $msg = 'That category already exists.';
+                $msgType = 'warn';
+            } else {
+                $insert = $conn->prepare('INSERT INTO product_category (product_category) VALUES (?)');
+                $insert->bind_param('s', $categoryName);
+                $insert->execute();
+                $insert->close();
+                $msg = 'Category added.';
+            }
+        }
+    } elseif ($action === 'edit_category') {
+        $categoryId = (int)($_POST['category_id'] ?? 0);
+        $categoryName = format_category_name($_POST['category_name'] ?? '');
+        if ($categoryId <= 0 || $categoryName === '') {
+            $msg = 'Please enter a category name.';
+            $msgType = 'warn';
+        } else {
+            $check = $conn->prepare('SELECT product_category_id FROM product_category WHERE LOWER(product_category) = LOWER(?) AND product_category_id != ?');
+            $check->bind_param('si', $categoryName, $categoryId);
+            $check->execute();
+            $existing = $check->get_result()->fetch_assoc();
+            $check->close();
+
+            if ($existing) {
+                $msg = 'That category already exists.';
+                $msgType = 'warn';
+            } else {
+                $update = $conn->prepare('UPDATE product_category SET product_category = ? WHERE product_category_id = ?');
+                $update->bind_param('si', $categoryName, $categoryId);
+                $update->execute();
+                $update->close();
+                $msg = 'Category updated.';
+            }
+        }
+    } elseif ($action === 'delete_category') {
+        $categoryId = (int)($_POST['category_id'] ?? 0);
+        try {
+            $uncategorizedId = resolve_uncategorized_category_id($conn);
+            if ($uncategorizedId !== $categoryId) {
+                $reassign = $conn->prepare('UPDATE products SET product_category_id = ? WHERE product_category_id = ?');
+                $reassign->bind_param('ii', $uncategorizedId, $categoryId);
+                $reassign->execute();
+                $reassign->close();
+            }
+
+            $stmt = $conn->prepare('DELETE FROM product_category WHERE product_category_id = ?');
+            $stmt->bind_param('i', $categoryId);
+            $stmt->execute();
+            $stmt->close();
+            $msg = 'Category deleted.';
+        } catch (Throwable $e) {
+            $msg = 'Cannot delete this category.';
+            $msgType = 'warn';
         }
     } elseif ($action === 'delete') {
         $productId = (int)($_POST['product_id'] ?? 0);
@@ -192,6 +355,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $imageToDelete = $imgStmt->get_result()->fetch_assoc()['product_image'] ?? null;
             $imgStmt->close();
 
+            // Recipe rows are just configuration for this product, not sales history — safe to drop.
+            // Past transaction_items keep their own product_name_snapshot, so deleting the product
+            // itself no longer erases what was actually sold.
+            $delRecipe = $conn->prepare('DELETE FROM product_ingredient_items WHERE product_id = ?');
+            $delRecipe->bind_param('i', $productId);
+            $delRecipe->execute();
+            $delRecipe->close();
+
             $stmt = $conn->prepare('DELETE FROM products WHERE product_id = ?');
             $stmt->bind_param('i', $productId);
             $stmt->execute();
@@ -199,7 +370,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             delete_product_image_file($imageToDelete);
             $msg = 'Product deleted.';
         } catch (Throwable $e) {
-            $msg = 'Cannot delete this product — it already has recorded sales.';
+            $msg = 'Could not delete this product.';
             $msgType = 'warn';
         }
     } elseif ($action === 'recipe_add') {
@@ -222,7 +393,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $msg = 'Selected ingredient no longer exists.';
                 $msgType = 'warn';
             } else {
-                $unit = $ingRow['ingredient_unit'];
+                $chosenUnit = trim($_POST['unit'] ?? '');
+                $unit = $chosenUnit !== '' ? $chosenUnit : $ingRow['ingredient_unit'];
+                $isChoice = !empty($_POST['is_choice']) ? 1 : 0;
                 $existing = $conn->prepare('SELECT product_ingredient_items_id FROM product_ingredient_items WHERE product_id = ? AND product_ingredients_id = ?');
                 $existing->bind_param('ii', $productId, $ingredientId);
                 $existing->execute();
@@ -231,13 +404,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 if ($existingRow) {
                     $itemId = (int)$existingRow['product_ingredient_items_id'];
-                    $upd = $conn->prepare('UPDATE product_ingredient_items SET quantity = ?, unit = ? WHERE product_ingredient_items_id = ?');
-                    $upd->bind_param('dsi', $qtyVal, $unit, $itemId);
+                    $upd = $conn->prepare('UPDATE product_ingredient_items SET quantity = ?, unit = ?, is_flavor_choice = ? WHERE product_ingredient_items_id = ?');
+                    $upd->bind_param('dsii', $qtyVal, $unit, $isChoice, $itemId);
                     $upd->execute();
                     $upd->close();
                 } else {
-                    $ins = $conn->prepare('INSERT INTO product_ingredient_items (product_id, product_ingredients_id, quantity, unit) VALUES (?, ?, ?, ?)');
-                    $ins->bind_param('iids', $productId, $ingredientId, $qtyVal, $unit);
+                    $ins = $conn->prepare('INSERT INTO product_ingredient_items (product_id, product_ingredients_id, quantity, unit, is_flavor_choice) VALUES (?, ?, ?, ?, ?)');
+                    $ins->bind_param('iidsi', $productId, $ingredientId, $qtyVal, $unit, $isChoice);
                     $ins->execute();
                     $ins->close();
                 }
@@ -299,9 +472,13 @@ while ($row = $ingResult->fetch_assoc()) {
     $ingredients[] = $row;
 }
 
+// Display-only units offered on each recipe line (e.g. "2 Tablespoons of Sugar") — independent
+// of whatever unit the ingredient's own stock is tracked in.
+$measurementUnits = ['Tablespoon', 'Pair', 'Slices', 'Grams', 'Piece', 'Pieces', 'Strips', 'Cup', 'Ml'];
+
 $recipesByProduct = [];
 $recipeResult = $conn->query('
-    SELECT pii.product_ingredient_items_id, pii.product_id, pii.product_ingredients_id, pii.quantity, pii.unit,
+    SELECT pii.product_ingredient_items_id, pii.product_id, pii.product_ingredients_id, pii.quantity, pii.unit, pii.is_flavor_choice,
            pi.ingredient_name
     FROM product_ingredient_items pii
     JOIN product_ingredients pi ON pi.product_ingredients_id = pii.product_ingredients_id
@@ -315,13 +492,14 @@ while ($row = $recipeResult->fetch_assoc()) {
         'ingredient_name' => $row['ingredient_name'],
         'quantity' => (float)$row['quantity'],
         'unit' => $row['unit'],
+        'is_choice' => (bool)$row['is_flavor_choice'],
     ];
 }
 
 $products = [];
 $prodResult = $conn->query('
     SELECT p.product_id, p.product_name, p.product_stocks, p.product_cost, p.product_selling_price,
-           p.product_category_id, pc.product_category, p.product_image, s.supplier_name, s.supplier_contact
+           p.product_category_id, pc.product_category, p.product_image, p.product_type, s.supplier_name, s.supplier_contact
     FROM products p
     JOIN product_category pc ON pc.product_category_id = p.product_category_id
     JOIN product_supplier s ON s.product_supplier_id = p.product_supplier_id
@@ -336,6 +514,7 @@ while ($row = $prodResult->fetch_assoc()) {
         'category_id' => (int)$row['product_category_id'],
         'category_name' => $row['product_category'],
         'tag_class' => category_tag_class($row['product_category']),
+        'type' => $row['product_type'],
         'stock' => $stock,
         'level' => stock_level($stock, $criticalStockThreshold, $lowStockThreshold),
         'cost' => (float)$row['product_cost'],
@@ -582,18 +761,15 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
 </nav>
 
 <div id="main">
-  <?php if ($msg): ?>
-    <div
-      style="margin:16px 26px 0;padding:12px 18px;border-radius:10px;font-size:13px;font-weight:600;background:<?= $msgType === 'warn' ? 'rgba(192,57,43,.10)' : 'rgba(122,158,126,.14)' ?>;color:<?= $msgType === 'warn' ? 'var(--red-soft)' : 'var(--sage)' ?>;">
-      <?= htmlspecialchars($msg) ?>
-    </div>
-  <?php endif; ?>
   <div class="page-strip">
     <div>
       <h1><i class="fas fa-boxes-stacked" style="color:var(--gold);font-size:18px;margin-right:8px;"></i>Products</h1>
       <div class="sub">Track stock levels, unit costs, and supplier contacts</div>
     </div>
-    <button class="btn-primary" onclick="openModal('modal-add-item')"><i class="fas fa-plus"></i> Add Product</button>
+    <div style="display:flex;gap:10px;">
+      <button class="btn-outline" onclick="openModal('modal-add-category')"><i class="fas fa-tag"></i> Categories</button>
+      <button class="btn-primary" onclick="openModal('modal-add-item')"><i class="fas fa-plus"></i> Add Product</button>
+    </div>
   </div>
   <div style="padding:22px 26px;">
     <div class="product-toolbar">
@@ -627,26 +803,75 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
       <div class="modal-field"><label>Product Name</label><input type="text" name="name" placeholder="e.g. Caramel Macchiato" required /></div>
       <div class="modal-field"><label>Product Image</label><input type="file" name="product_image" accept="image/*" /></div>
       <div class="modal-field">
+        <label>Product Type</label>
+        <select name="product_type" required onchange="toggleProductTypeFields(this, 'add-prepared-fields', 'add-madetoorder-fields')">
+          <option value="">Select type…</option>
+          <option value="made_to_order">Made to Order</option>
+          <option value="prepared">Prepared</option>
+        </select>
+      </div>
+      <div class="modal-field">
         <label>Category</label>
-        <select name="category" onchange="toggleNewCategoryField(this, 'add-new-category-wrap')">
+        <select name="category">
           <option value="">Select category…</option>
           <?php foreach ($categories as $cat): ?>
             <option value="<?= (int)$cat['product_category_id'] ?>"><?= htmlspecialchars($cat['product_category']) ?></option>
           <?php endforeach; ?>
-          <option value="new">+ Add new category…</option>
         </select>
       </div>
-      <div class="modal-field" id="add-new-category-wrap" style="display:none;"><label>New Category Name</label><input type="text" name="new_category_name" placeholder="e.g. Pastries" /></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-        <div class="modal-field"><label>Stock Quantity</label><input type="number" name="stock" min="0" placeholder="0" required /></div>
-        <div class="modal-field"><label>Unit Cost (₱)</label><input type="number" name="cost" min="0" step="0.01" placeholder="0.00" required /></div>
-      </div>
       <div class="modal-field"><label>Selling Price (₱)</label><input type="number" name="price" min="0" step="0.01" placeholder="0.00" required /></div>
-      <div class="modal-field"><label>Supplier Name</label><input type="text" name="supplier_name" placeholder="Supplier company" required /></div>
-      <div class="modal-field"><label>Supplier Contact</label><input type="text" name="supplier_contact" placeholder="09XX-XXX-XXXX" required /></div>
+
+      <div id="add-madetoorder-fields" style="display:none;">
+        <div class="modal-field">
+          <label>Ingredients Needed</label>
+          <div id="add-ingredient-rows"></div>
+          <button type="button" class="btn-outline" style="margin-top:6px;" onclick="addIngredientRow('add-ingredient-rows')"><i class="fas fa-plus"></i> Add Ingredient</button>
+        </div>
+      </div>
+
+      <div id="add-prepared-fields" style="display:none;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div class="modal-field"><label>Stock Quantity</label><input type="number" name="stock" min="0" placeholder="0" /></div>
+          <div class="modal-field"><label>Unit Cost (₱)</label><input type="number" name="cost" min="0" step="0.01" placeholder="0.00" /></div>
+        </div>
+        <div class="modal-field"><label>Supplier Name</label><input type="text" name="supplier_name" placeholder="Supplier company"  /></div>
+        <div class="modal-field"><label>Supplier Contact</label><input type="text" name="supplier_contact" placeholder="09XX-XXX-XXXX"  /></div>
+      </div>
+
       <button type="submit" class="btn-modal-primary"><i class="fas fa-check" style="margin-right:6px;"></i>Add Product</button>
       <button type="button" class="btn-modal-cancel" onclick="closeModal('modal-add-item')">Cancel</button>
     </form>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-add-category">
+  <div class="modal-box" style="max-width:400px;">
+    <div class="modal-title"><i class="fas fa-tag" style="color:var(--gold);margin-right:8px;"></i>Manage Categories</div>
+    <div class="modal-sub">Add, rename, or remove product categories.</div>
+
+    <div id="category-list" style="margin-bottom:16px;max-height:240px;overflow-y:auto;">
+      <?php foreach ($categories as $cat): ?>
+        <div class="category-row" data-category-id="<?= (int)$cat['product_category_id'] ?>" data-category-name="<?= htmlspecialchars($cat['product_category'], ENT_QUOTES) ?>" style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--cream-dark);">
+          <span style="flex:1;font-size:13px;"><?= htmlspecialchars($cat['product_category']) ?></span>
+          <button type="button" class="tbl-btn tbl-btn-edit" onclick="startEditCategory(this)">Edit</button>
+          <form method="POST" action="products.php" style="display:contents;" onsubmit="return confirmSubmit(event, 'Delete category &quot;<?= htmlspecialchars($cat['product_category'], ENT_QUOTES) ?>&quot;? Products still using it will need a new category first.', 'Delete', true)">
+            <input type="hidden" name="action" value="delete_category">
+            <input type="hidden" name="category_id" value="<?= (int)$cat['product_category_id'] ?>">
+            <button type="submit" class="tbl-btn tbl-btn-del">Delete</button>
+          </form>
+        </div>
+      <?php endforeach; ?>
+      <?php if (empty($categories)): ?>
+        <div style="color:#aaa;font-size:13px;padding:8px 0;">No categories yet.</div>
+      <?php endif; ?>
+    </div>
+
+    <form method="POST" action="products.php" style="border-top:1px solid var(--cream-dark);padding-top:14px;" onsubmit="return confirmSubmit(event, 'Add category &quot;' + this.category_name.value.trim() + '&quot;?', 'Add Category')">
+      <input type="hidden" name="action" value="add_category">
+      <div class="modal-field"><label>New Category Name</label><input type="text" name="category_name" placeholder="e.g. Pastries" required /></div>
+      <button type="submit" class="btn-modal-primary"><i class="fas fa-plus" style="margin-right:6px;"></i>Add Category</button>
+    </form>
+    <button type="button" class="btn-modal-cancel" onclick="closeModal('modal-add-category')">Close</button>
   </div>
 </div>
 
@@ -667,23 +892,40 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
         </div>
       </div>
       <div class="modal-field">
+        <label>Product Type</label>
+        <select name="product_type" id="edit-product-type" required onchange="toggleProductTypeFields(this, 'edit-prepared-fields', 'edit-madetoorder-fields')">
+          <option value="made_to_order">Made to Order</option>
+          <option value="prepared">Prepared</option>
+        </select>
+      </div>
+      <div class="modal-field">
         <label>Category</label>
-        <select name="category" id="edit-category" onchange="toggleNewCategoryField(this, 'edit-new-category-wrap')">
+        <select name="category" id="edit-category">
           <option value="">Select category…</option>
           <?php foreach ($categories as $cat): ?>
             <option value="<?= (int)$cat['product_category_id'] ?>"><?= htmlspecialchars($cat['product_category']) ?></option>
           <?php endforeach; ?>
-          <option value="new">+ Add new category…</option>
         </select>
       </div>
-      <div class="modal-field" id="edit-new-category-wrap" style="display:none;"><label>New Category Name</label><input type="text" name="new_category_name" /></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-        <div class="modal-field"><label>Stock Quantity</label><input type="number" name="stock" id="edit-stock" min="0" required /></div>
-        <div class="modal-field"><label>Unit Cost (₱)</label><input type="number" name="cost" id="edit-cost" min="0" step="0.01" required /></div>
-      </div>
       <div class="modal-field"><label>Selling Price (₱)</label><input type="number" name="price" id="edit-price" min="0" step="0.01" required /></div>
-      <div class="modal-field"><label>Supplier Name</label><input type="text" name="supplier_name" id="edit-supplier-name" required /></div>
-      <div class="modal-field"><label>Supplier Contact</label><input type="text" name="supplier_contact" id="edit-supplier-contact" required /></div>
+
+      <div id="edit-madetoorder-fields" style="display:none;">
+        <div class="modal-field">
+          <label>Ingredients Needed</label>
+          <div id="edit-ingredient-rows"></div>
+          <button type="button" class="btn-outline" style="margin-top:6px;" onclick="addIngredientRow('edit-ingredient-rows')"><i class="fas fa-plus"></i> Add Ingredient</button>
+        </div>
+      </div>
+
+      <div id="edit-prepared-fields" style="display:none;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div class="modal-field"><label>Stock Quantity</label><input type="number" name="stock" id="edit-stock" min="0" /></div>
+          <div class="modal-field"><label>Unit Cost (₱)</label><input type="number" name="cost" id="edit-cost" min="0" step="0.01" /></div>
+        </div>
+        <div class="modal-field"><label>Supplier Name</label><input type="text" name="supplier_name" id="edit-supplier-name" /></div>
+        <div class="modal-field"><label>Supplier Contact</label><input type="text" name="supplier_contact" id="edit-supplier-contact" /></div>
+      </div>
+
       <button type="submit" class="btn-modal-primary"><i class="fas fa-check" style="margin-right:6px;"></i>Save Changes</button>
       <button type="button" class="btn-modal-cancel" onclick="closeModal('modal-edit-item')">Cancel</button>
     </form>
@@ -710,10 +952,25 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
             <?php endforeach; ?>
           </select>
         </div>
-        <div class="modal-field">
-          <label>Quantity per unit sold <span id="recipe-unit-label" style="text-transform:none;font-weight:400;"></span></label>
-          <input type="number" name="quantity" id="recipe-quantity-input" min="0" step="0.01" placeholder="0.00" required />
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div class="modal-field">
+            <label>Quantity per unit sold <span id="recipe-unit-label" style="text-transform:none;font-weight:400;"></span></label>
+            <input type="number" name="quantity" id="recipe-quantity-input" min="0" step="0.01" placeholder="0.00" required />
+          </div>
+          <div class="modal-field">
+            <label>Unit</label>
+            <select name="unit" required>
+              <option value="">Select unit…</option>
+              <?php foreach ($measurementUnits as $u): ?>
+                <option value="<?= htmlspecialchars($u) ?>"><?= htmlspecialchars($u) ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
         </div>
+        <label class="modal-field" style="display:flex;align-items:center;gap:6px;font-size:12px;color:#888;cursor:pointer;font-weight:400;">
+          <input type="checkbox" name="is_choice" value="1" style="width:auto;" />
+          Flavor choice option — customer picks one; only that ingredient is deducted from stock
+        </label>
         <button type="submit" class="btn-modal-primary"><i class="fas fa-plus" style="margin-right:6px;"></i>Add to Recipe</button>
       </form>
     <?php endif; ?>
@@ -732,10 +989,16 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
 
 <div id="toast-container"></div>
 <script id="products-data" type="application/json"><?= json_encode($products, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?></script>
+<script id="ingredients-data" type="application/json"><?= json_encode($ingredients, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?></script>
+<script id="measurement-units-data" type="application/json"><?= json_encode($measurementUnits, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?></script>
 
 <script>
   // Product catalog — loaded from the products table (see products-data script tag above)
   const products = JSON.parse(document.getElementById('products-data').textContent);
+  // Ingredient list (for the made-to-order recipe builder) — from product_ingredients
+  const allIngredients = JSON.parse(document.getElementById('ingredients-data').textContent);
+  // Display-unit choices offered on each recipe line (Tablespoon, Cup, Grams, etc.)
+  const measurementUnits = JSON.parse(document.getElementById('measurement-units-data').textContent);
 
   document.addEventListener('DOMContentLoaded', () => {
     updateClock(); setInterval(updateClock, 1000);
@@ -743,6 +1006,10 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
 
     const reopenId = parseInt(document.body.dataset.reopenRecipe || '0', 10);
     if (reopenId > 0) openRecipeModal(reopenId);
+
+    <?php if ($msg): ?>
+      showToast(<?= json_encode($msg, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>, <?= json_encode($msgType, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>);
+    <?php endif; ?>
   });
 
   function updateClock() {
@@ -750,8 +1017,46 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
     if (clock) clock.textContent = new Date().toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
-  function toggleNewCategoryField(select, wrapId) {
-    document.getElementById(wrapId).style.display = select.value === 'new' ? 'block' : 'none';
+  function toggleProductTypeFields(select, preparedWrapId, madeToOrderWrapId) {
+    const isPrepared = select.value === 'prepared';
+    const isMadeToOrder = select.value === 'made_to_order';
+    document.getElementById(preparedWrapId).style.display = isPrepared ? 'block' : 'none';
+    document.getElementById(madeToOrderWrapId).style.display = isMadeToOrder ? 'block' : 'none';
+    // Hidden fields shouldn't block submission, so only require them for the visible type
+    document.querySelectorAll('#' + preparedWrapId + ' input').forEach(inp => { inp.required = isPrepared; });
+  }
+
+  function addIngredientRow(containerId, selectedIngredientId = '', quantity = '', selectedUnit = '', isChoice = false) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const row = document.createElement('div');
+    row.style.cssText = 'padding-bottom:8px;margin-bottom:8px;border-bottom:1px solid var(--cream-dark);';
+    const options = allIngredients.map(ing =>
+      `<option value="${ing.product_ingredients_id}" data-unit="${ing.ingredient_unit}" ${String(ing.product_ingredients_id) === String(selectedIngredientId) ? 'selected' : ''}>${ing.ingredient_name} (${ing.ingredient_unit})</option>`
+    ).join('');
+    const unitOptions = measurementUnits.map(u =>
+      `<option value="${u}" ${u === selectedUnit ? 'selected' : ''}>${u}</option>`
+    ).join('');
+    row.innerHTML = `
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+        <select name="ingredient_id[]" style="flex:2;padding:9px 13px;border-radius:8px;border:1.5px solid var(--cream-dark);background:var(--cream);font-family:var(--font-body);font-size:13px;color:var(--charcoal);">
+          <option value="">Select ingredient…</option>
+          ${options}
+        </select>
+        <input type="number" name="ingredient_qty[]" min="0" step="0.01" placeholder="Qty" value="${quantity}" style="flex:1;padding:9px 13px;border-radius:8px;border:1.5px solid var(--cream-dark);background:var(--cream);font-family:var(--font-body);font-size:13px;color:var(--charcoal);" />
+        <select name="ingredient_unit[]" style="flex:1;padding:9px 13px;border-radius:8px;border:1.5px solid var(--cream-dark);background:var(--cream);font-family:var(--font-body);font-size:13px;color:var(--charcoal);">
+          <option value="">Unit…</option>
+          ${unitOptions}
+        </select>
+        <button type="button" class="tbl-btn tbl-btn-del" onclick="this.parentElement.parentElement.remove()">✕</button>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#888;cursor:pointer;">
+        <input type="hidden" name="ingredient_is_choice[]" value="${isChoice ? '1' : '0'}">
+        <input type="checkbox" ${isChoice ? 'checked' : ''} onchange="this.previousElementSibling.value = this.checked ? '1' : '0'" style="width:auto;" />
+        Flavor choice option — customer picks one; only that ingredient is deducted from stock
+      </label>
+    `;
+    container.appendChild(row);
   }
 
   function money(n) {
@@ -779,19 +1084,21 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
       return;
     }
 
-    tbody.innerHTML = filtered.map(p => `
+    tbody.innerHTML = filtered.map(p => {
+      const isMotd = p.type === 'made_to_order';
+      return `
       <tr>
         <td>${p.image ? `<img src="${p.image}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:6px;">` : `<div style="width:40px;height:40px;border-radius:6px;background:var(--cream-dark);"></div>`}</td>
-        <td style="font-weight:600;">${p.name}</td>
+        <td style="font-weight:600;">${p.name}${isMotd ? ' <span class="tag tag-supply" style="margin-left:4px;">Made to Order</span>' : ''}</td>
         <td><span class="tag ${p.tag_class}">${p.category_name}</span></td>
-        <td><div class="stock-indicator stock-${p.level}"><div class="stock-dot"></div>${p.stock}</div></td>
-        <td class="text-mono">${money(p.cost)}</td>
+        <td>${isMotd ? '<span class="text-muted">—</span>' : `<div class="stock-indicator stock-${p.level}"><div class="stock-dot"></div>${p.stock}</div>`}</td>
+        <td class="text-mono">${isMotd ? '<span class="text-muted">—</span>' : money(p.cost)}</td>
         <td class="text-mono">${money(p.price)}</td>
-        <td>${p.supplier_name}</td>
-        <td class="text-mono" style="font-size:12px;">${p.supplier_contact}</td>
+        <td>${isMotd ? '<span class="text-muted">—</span>' : p.supplier_name}</td>
+        <td class="text-mono" style="font-size:12px;">${isMotd ? '<span class="text-muted">—</span>' : p.supplier_contact}</td>
         <td style="display:flex;gap:6px;align-items:center;">
           <button class="tbl-btn tbl-btn-edit" onclick="openEditModal(${p.id})">Edit</button>
-          <button class="tbl-btn tbl-btn-edit" onclick="openRecipeModal(${p.id})">Recipe</button>
+          ${isMotd ? `<button class="tbl-btn tbl-btn-edit" onclick="openRecipeModal(${p.id})">Recipe</button>` : ''}
           <form method="POST" action="products.php" style="display:contents;" onsubmit="return confirmDelete(event, 'Delete ${p.name.replace(/'/g, "\\'")}?')">
             <input type="hidden" name="action" value="delete">
             <input type="hidden" name="product_id" value="${p.id}">
@@ -799,7 +1106,8 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
           </form>
         </td>
       </tr>
-    `).join('');
+    `;
+    }).join('');
   }
 
   function filterProducts() {
@@ -816,12 +1124,21 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
     document.getElementById('edit-product-id').value = p.id;
     document.getElementById('edit-name').value = p.name;
     document.getElementById('edit-category').value = p.category_id;
-    document.getElementById('edit-new-category-wrap').style.display = 'none';
-    document.getElementById('edit-stock').value = p.stock;
-    document.getElementById('edit-cost').value = p.cost;
     document.getElementById('edit-price').value = p.price;
-    document.getElementById('edit-supplier-name').value = p.supplier_name;
-    document.getElementById('edit-supplier-contact').value = p.supplier_contact;
+
+    const typeSelect = document.getElementById('edit-product-type');
+    typeSelect.value = p.type;
+    toggleProductTypeFields(typeSelect, 'edit-prepared-fields', 'edit-madetoorder-fields');
+
+    document.getElementById('edit-stock').value = p.type === 'prepared' ? p.stock : '';
+    document.getElementById('edit-cost').value = p.type === 'prepared' ? p.cost : '';
+    document.getElementById('edit-supplier-name').value = p.type === 'prepared' ? p.supplier_name : '';
+    document.getElementById('edit-supplier-contact').value = p.type === 'prepared' ? p.supplier_contact : '';
+
+    const ingredientRows = document.getElementById('edit-ingredient-rows');
+    ingredientRows.innerHTML = '';
+    (p.recipe || []).forEach(r => addIngredientRow('edit-ingredient-rows', r.ingredient_id, r.quantity, r.unit, r.is_choice));
+
     const preview = document.getElementById('edit-current-image');
     if (p.image) {
       preview.src = p.image;
@@ -855,7 +1172,7 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
     }
     list.innerHTML = p.recipe.map(r => `
       <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--cream-dark);">
-        <div style="font-size:13px;"><strong>${r.ingredient_name}</strong> — ${r.quantity} ${r.unit} per unit sold</div>
+        <div style="font-size:13px;"><strong>${r.ingredient_name}</strong> — ${r.quantity} ${r.unit} per unit sold${r.is_choice ? ' <span class="tag tag-supply">Flavor choice</span>' : ''}</div>
         <form method="POST" action="products.php" onsubmit="return confirmDelete(event, 'Remove ${r.ingredient_name.replace(/'/g, "\\'")} from this recipe?')">
           <input type="hidden" name="action" value="recipe_remove">
           <input type="hidden" name="item_id" value="${r.item_id}">
@@ -874,24 +1191,48 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
     if (label) label.textContent = opt && opt.dataset.unit ? '(' + opt.dataset.unit + ')' : '';
   }
 
+  function startEditCategory(btn) {
+    const row = btn.closest('.category-row');
+    const originalHtml = row.innerHTML;
+    const id = row.dataset.categoryId;
+    const currentName = row.dataset.categoryName;
+    row.innerHTML = `
+      <form method="POST" action="products.php" style="display:flex;gap:8px;align-items:center;flex:1;" onsubmit="return confirmSubmit(event, 'Rename this category to \\'' + this.category_name.value.trim() + '\\'?', 'Save')">
+        <input type="hidden" name="action" value="edit_category">
+        <input type="hidden" name="category_id" value="${id}">
+        <input type="text" name="category_name" value="${currentName.replace(/"/g, '&quot;')}" style="flex:1;padding:7px 10px;border-radius:8px;border:1.5px solid var(--cream-dark);background:var(--cream);font-family:var(--font-body);font-size:13px;color:var(--charcoal);" required />
+        <button type="submit" class="tbl-btn tbl-btn-edit">Save</button>
+        <button type="button" class="tbl-btn tbl-btn-del" data-cancel-edit>Cancel</button>
+      </form>
+    `;
+    row.querySelector('[data-cancel-edit]').addEventListener('click', () => { row.innerHTML = originalHtml; });
+  }
+
   function openModal(id)  { document.getElementById(id).classList.add('show'); }
   function closeModal(id) { document.getElementById(id).classList.remove('show'); }
   document.querySelectorAll('.modal-overlay').forEach(m =>
     m.addEventListener('click', e => { if (e.target === m) closeModal(m.id); })
   );
 
-  // In-page replacement for the native confirm() dialog on delete forms
-  let pendingDeleteForm = null;
-  function confirmDelete(event, message) {
+  // In-page replacement for the native confirm() dialog — reused for deletes and other
+  // actions (e.g. Add Category) that should ask "are you sure?" before submitting.
+  let pendingConfirmForm = null;
+  function confirmSubmit(event, message, confirmLabel = 'Confirm', danger = false) {
     event.preventDefault();
-    pendingDeleteForm = event.target;
+    pendingConfirmForm = event.target;
     document.getElementById('confirm-delete-message').textContent = message;
+    const yesBtn = document.getElementById('confirm-delete-yes');
+    yesBtn.textContent = confirmLabel;
+    yesBtn.style.background = danger ? 'var(--red-soft)' : 'var(--mocha)';
     openModal('modal-confirm-delete');
     return false;
   }
+  function confirmDelete(event, message) {
+    return confirmSubmit(event, message, 'Delete', true);
+  }
   document.getElementById('confirm-delete-yes').addEventListener('click', () => {
     closeModal('modal-confirm-delete');
-    if (pendingDeleteForm) { pendingDeleteForm.submit(); pendingDeleteForm = null; }
+    if (pendingConfirmForm) { pendingConfirmForm.submit(); pendingConfirmForm = null; }
   });
 
   function showToast(msg, type = 'success') {

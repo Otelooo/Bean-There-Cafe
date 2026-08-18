@@ -55,12 +55,12 @@ $criticalStockCount = (int)$stmt->get_result()->fetch_assoc()['cnt'];
 $stmt->close();
 
 $stmt = $conn->prepare("
-    SELECT p.product_name, SUM(ti.quantity) AS units
+    SELECT COALESCE(ti.product_name_snapshot, p.product_name, 'Deleted product') AS product_name, SUM(ti.quantity) AS units
     FROM transaction_items ti
     JOIN transactions t ON t.transaction_id = ti.transaction_id
-    JOIN products p ON p.product_id = ti.product_id
+    LEFT JOIN products p ON p.product_id = ti.product_id
     WHERE t.transaction_status = 'completed' AND DATE(t.transaction_date) = CURDATE() AND t.user_id = ?
-    GROUP BY ti.product_id, p.product_name
+    GROUP BY COALESCE(ti.product_name_snapshot, p.product_name, 'Deleted product')
     ORDER BY units DESC
     LIMIT 1
 ");
@@ -71,14 +71,15 @@ $stmt->close();
 
 $recentTransactions = [];
 $stmt = $conn->prepare("
-    SELECT t.transaction_id, t.transaction_total, t.payment_method, t.transaction_status, u.username,
-           GROUP_CONCAT(CONCAT(ti.quantity, '\xc3\x97', p.product_name) SEPARATOR ', ') AS items_summary
+    SELECT t.transaction_id, t.transaction_total, t.payment_method, t.transaction_status,
+           COALESCE(t.cashier_username, u.username, 'Deleted user') AS username,
+           GROUP_CONCAT(CONCAT(ti.quantity, '\xc3\x97', COALESCE(ti.product_name_snapshot, p.product_name, 'Deleted product')) SEPARATOR ', ') AS items_summary
     FROM transactions t
-    JOIN users u ON u.user_id = t.user_id
+    LEFT JOIN users u ON u.user_id = t.user_id
     LEFT JOIN transaction_items ti ON ti.transaction_id = t.transaction_id
     LEFT JOIN products p ON p.product_id = ti.product_id
     WHERE t.user_id = ?
-    GROUP BY t.transaction_id, t.transaction_total, t.payment_method, t.transaction_status, u.username
+    GROUP BY t.transaction_id, t.transaction_total, t.payment_method, t.transaction_status, t.cashier_username, u.username
     ORDER BY t.transaction_date DESC
     LIMIT 5
 ");
