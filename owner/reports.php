@@ -648,6 +648,7 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
       display: flex;
       align-items: center;
       justify-content: space-between;
+      position: sticky; top: var(--header-h); z-index: 500;
     }
 
     .page-strip h1 {
@@ -1182,8 +1183,7 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
         <div class="sub">Bean There Café</div>
       </div>
     </div>
-    <div class="header-center"><span class="portal-badge">Owner Panel</span><span class="header-view-label">Sales
-        Reports</span></div>
+    <div class="header-center"></div>
     <div class="header-right">
       <div class="header-clock" id="clock"></div>
       <div class="header-user">

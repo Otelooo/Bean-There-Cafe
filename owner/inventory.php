@@ -17,16 +17,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $name = trim($_POST['name'] ?? '');
         $stock = $_POST['stock'] ?? '';
         $unit = trim($_POST['unit'] ?? '');
+        $supplier = trim($_POST['supplier_name'] ?? '');
+        $contact = trim($_POST['supplier_contact'] ?? '');
 
         if ($name === '' || !is_numeric($stock) || (float)$stock < 0 || $unit === '') {
             $msg = 'Please fill in all fields with valid values.';
             $msgType = 'warn';
         } else {
             $stockVal = (float)$stock;
+            $supplierVal = $supplier !== '' ? $supplier : null;
+            $contactVal = $contact !== '' ? $contact : null;
 
             if ($action === 'add') {
-                $stmt = $conn->prepare('INSERT INTO product_ingredients (ingredient_name, ingredient_stock, ingredient_unit) VALUES (?, ?, ?)');
-                $stmt->bind_param('sds', $name, $stockVal, $unit);
+                $stmt = $conn->prepare('INSERT INTO product_ingredients (ingredient_name, ingredient_stock, ingredient_unit, ingredient_supplier, ingredient_contact) VALUES (?, ?, ?, ?, ?)');
+                $stmt->bind_param('sdsss', $name, $stockVal, $unit, $supplierVal, $contactVal);
                 $stmt->execute();
                 $stmt->close();
                 $msg = 'Ingredient added.';
@@ -36,8 +40,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $msg = 'Invalid ingredient.';
                     $msgType = 'warn';
                 } else {
-                    $stmt = $conn->prepare('UPDATE product_ingredients SET ingredient_name = ?, ingredient_stock = ?, ingredient_unit = ? WHERE product_ingredients_id = ?');
-                    $stmt->bind_param('sdsi', $name, $stockVal, $unit, $ingredientId);
+                    $stmt = $conn->prepare('UPDATE product_ingredients SET ingredient_name = ?, ingredient_stock = ?, ingredient_unit = ?, ingredient_supplier = ?, ingredient_contact = ? WHERE product_ingredients_id = ?');
+                    $stmt->bind_param('sdsssi', $name, $stockVal, $unit, $supplierVal, $contactVal, $ingredientId);
                     $stmt->execute();
                     $stmt->close();
                     $msg = 'Ingredient updated.';
@@ -80,7 +84,7 @@ $displayName = $_SESSION['username'] ?? 'Owner';
 $initials = strtoupper(substr($displayName, 0, 2));
 
 $ingredients = [];
-$result = $conn->query('SELECT product_ingredients_id, ingredient_name, ingredient_stock, ingredient_unit FROM product_ingredients ORDER BY ingredient_name');
+$result = $conn->query('SELECT product_ingredients_id, ingredient_name, ingredient_stock, ingredient_unit, ingredient_supplier, ingredient_contact FROM product_ingredients ORDER BY ingredient_name');
 while ($row = $result->fetch_assoc()) {
     $stock = (float)$row['ingredient_stock'];
     $ingredients[] = [
@@ -88,6 +92,8 @@ while ($row = $result->fetch_assoc()) {
         'name' => $row['ingredient_name'],
         'stock' => $stock,
         'unit' => $row['ingredient_unit'],
+        'supplier' => $row['ingredient_supplier'] ?? '',
+        'contact' => $row['ingredient_contact'] ?? '',
         'level' => ingredient_stock_level($stock, $criticalStockThreshold, $lowStockThreshold),
     ];
 }
@@ -226,6 +232,7 @@ $criticalCount = count(array_filter($ingredients, fn($i) => $i['level'] === 'cri
       background: var(--cream); border-bottom: 1px solid var(--cream-dark);
       padding: 15px 26px;
       display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: var(--header-h); z-index: 500;
     }
     .page-strip h1 { font-family: var(--font-display); font-size: 21px; font-weight: 700; color: var(--mocha-deep); }
     .page-strip .sub { font-size: 12px; color: var(--mocha-mid); margin-top: 1px; }
@@ -247,6 +254,18 @@ $criticalCount = count(array_filter($ingredients, fn($i) => $i['level'] === 'cri
     .stock-ok   .stock-dot { background:var(--sage); } .stock-ok   { color:var(--sage); }
     .stock-low  .stock-dot { background:#e67e22; } .stock-low  { color:#e67e22; }
     .stock-crit .stock-dot { background:var(--red-soft); } .stock-crit { color:var(--red-soft); }
+    .content-row { display:flex; gap:20px; align-items:flex-start; }
+    .content-row .table-wrap { flex:1; min-width:0; }
+    .legend-card { width:190px; flex-shrink:0; background:var(--cream); border:1.5px solid var(--cream-dark); border-radius:var(--radius-lg); box-shadow:var(--shadow-sm); padding:16px 18px; }
+    .legend-card-title { font-family:var(--font-display); font-weight:700; font-size:13px; color:var(--mocha-deep); margin-bottom:12px; }
+    .legend-item { display:flex; align-items:flex-start; gap:8px; margin-bottom:12px; }
+    .legend-item:last-child { margin-bottom:0; }
+    .legend-dot { width:9px; height:9px; border-radius:50%; margin-top:4px; flex-shrink:0; }
+    .legend-dot.ok   { background:var(--sage); }
+    .legend-dot.low  { background:#e67e22; }
+    .legend-dot.crit { background:var(--red-soft); }
+    .legend-label { font-size:12px; font-weight:700; color:var(--charcoal); }
+    .legend-desc  { font-size:11px; color:#999; margin-top:2px; line-height:1.4; }
     .tbl-btn { padding:4px 11px; border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; border:1.5px solid; transition:all .15s; background:transparent; }
     .tbl-btn-edit { border-color:var(--gold); color:var(--gold); } .tbl-btn-edit:hover { background:var(--gold); color:#fff; }
     .tbl-btn-del  { border-color:#c9a; color:#c88; } .tbl-btn-del:hover { background:var(--red-soft); border-color:var(--red-soft); color:#fff; }
@@ -298,7 +317,7 @@ $criticalCount = count(array_filter($ingredients, fn($i) => $i['level'] === 'cri
     <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
     <div class="brand-text"><div class="name">SmartStock</div><div class="sub">Bean There Café</div></div>
   </div>
-  <div class="header-center"><span class="portal-badge">Owner Panel</span><span class="header-view-label">Inventory</span></div>
+  <div class="header-center"></div>
   <div class="header-right">
     <div class="header-clock" id="clock"></div>
     <div class="header-user">
@@ -349,11 +368,19 @@ $criticalCount = count(array_filter($ingredients, fn($i) => $i['level'] === 'cri
       </div>
       <select class="filter-select" id="ing-stock-filter" onchange="filterIngredients()"><option value="">All Stock Levels</option><option value="ok">OK</option><option value="low">Low</option><option value="crit">Critical</option></select>
     </div>
-    <div class="table-wrap">
-      <table class="data-table">
-        <thead><tr><th>Ingredient</th><th>Stock</th><th>Unit</th><th>Status</th><th>Actions</th></tr></thead>
-        <tbody id="ing-tbody"></tbody>
-      </table>
+    <div class="content-row">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Ingredient</th><th>Stock</th><th>Unit</th><th>Supplier</th><th>Contact</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody id="ing-tbody"></tbody>
+        </table>
+      </div>
+      <div class="legend-card">
+        <div class="legend-card-title">Legend</div>
+        <div class="legend-item"><span class="legend-dot ok"></span><div><div class="legend-label">OK</div><div class="legend-desc">Stock at a healthy level</div></div></div>
+        <div class="legend-item"><span class="legend-dot low"></span><div><div class="legend-label">Low</div><div class="legend-desc">Running low, reorder soon</div></div></div>
+        <div class="legend-item"><span class="legend-dot crit"></span><div><div class="legend-label">Critical</div><div class="legend-desc">Reorder immediately</div></div></div>
+      </div>
     </div>
   </div>
 </div>
@@ -369,6 +396,8 @@ $criticalCount = count(array_filter($ingredients, fn($i) => $i['level'] === 'cri
         <div class="modal-field"><label>Stock Quantity</label><input type="number" name="stock" min="0" step="0.01" placeholder="0" required /></div>
         <div class="modal-field"><label>Unit</label><input type="text" name="unit" placeholder="kg, L, pcs…" required /></div>
       </div>
+      <div class="modal-field"><label>Supplier Name</label><input type="text" name="supplier_name" placeholder="Supplier company" /></div>
+      <div class="modal-field"><label>Supplier Contact</label><input type="text" name="supplier_contact" placeholder="09XX-XXX-XXXX" /></div>
       <button type="submit" class="btn-modal-primary"><i class="fas fa-check" style="margin-right:6px;"></i>Add Ingredient</button>
       <button type="button" class="btn-modal-cancel" onclick="closeModal('modal-add-item')">Cancel</button>
     </form>
@@ -387,6 +416,8 @@ $criticalCount = count(array_filter($ingredients, fn($i) => $i['level'] === 'cri
         <div class="modal-field"><label>Stock Quantity</label><input type="number" name="stock" id="edit-stock" min="0" step="0.01" required /></div>
         <div class="modal-field"><label>Unit</label><input type="text" name="unit" id="edit-unit" required /></div>
       </div>
+      <div class="modal-field"><label>Supplier Name</label><input type="text" name="supplier_name" id="edit-supplier-name" /></div>
+      <div class="modal-field"><label>Supplier Contact</label><input type="text" name="supplier_contact" id="edit-supplier-contact" /></div>
       <button type="submit" class="btn-modal-primary"><i class="fas fa-check" style="margin-right:6px;"></i>Save Changes</button>
       <button type="button" class="btn-modal-cancel" onclick="closeModal('modal-edit-item')">Cancel</button>
     </form>
@@ -430,7 +461,7 @@ $criticalCount = count(array_filter($ingredients, fn($i) => $i['level'] === 'cri
     if (!tbody) return;
 
     if (ingredients.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#aaa;padding:24px 8px;">No ingredients yet. Click "Add Ingredient" to add your first item.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#aaa;padding:24px 8px;">No ingredients yet. Click "Add Ingredient" to add your first item.</td></tr>';
       return;
     }
 
@@ -441,7 +472,7 @@ $criticalCount = count(array_filter($ingredients, fn($i) => $i['level'] === 'cri
     });
 
     if (filtered.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#aaa;padding:24px 8px;">No ingredients match your filters.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#aaa;padding:24px 8px;">No ingredients match your filters.</td></tr>';
       return;
     }
 
@@ -450,6 +481,8 @@ $criticalCount = count(array_filter($ingredients, fn($i) => $i['level'] === 'cri
         <td style="font-weight:600;">${i.name}</td>
         <td><div class="stock-indicator stock-${i.level}"><div class="stock-dot"></div>${qty(i.stock)}</div></td>
         <td class="text-mono">${i.unit}</td>
+        <td>${i.supplier ? i.supplier : '<span class="text-muted">—</span>'}</td>
+        <td class="text-mono" style="font-size:12px;">${i.contact ? i.contact : '<span class="text-muted">—</span>'}</td>
         <td><span class="status-pill ${i.level === 'ok' ? 'pill-success' : i.level === 'low' ? 'pill-warn' : 'pill-red'}">${levelLabels[i.level]}</span></td>
         <td style="display:flex;gap:6px;align-items:center;">
           <button class="tbl-btn tbl-btn-edit" onclick="openEditModal(${i.id})">Edit</button>
@@ -477,6 +510,8 @@ $criticalCount = count(array_filter($ingredients, fn($i) => $i['level'] === 'cri
     document.getElementById('edit-name').value = i.name;
     document.getElementById('edit-stock').value = i.stock;
     document.getElementById('edit-unit').value = i.unit;
+    document.getElementById('edit-supplier-name').value = i.supplier;
+    document.getElementById('edit-supplier-contact').value = i.contact;
     openModal('modal-edit-item');
   }
 

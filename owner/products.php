@@ -660,6 +660,7 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
       background: var(--cream); border-bottom: 1px solid var(--cream-dark);
       padding: 15px 26px;
       display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: var(--header-h); z-index: 500;
     }
     .page-strip h1 { font-family: var(--font-display); font-size: 21px; font-weight: 700; color: var(--mocha-deep); }
     .page-strip .sub { font-size: 12px; color: var(--mocha-mid); margin-top: 1px; }
@@ -682,6 +683,18 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
     .stock-ok   .stock-dot { background:var(--sage); } .stock-ok   { color:var(--sage); }
     .stock-low  .stock-dot { background:#e67e22; } .stock-low  { color:#e67e22; }
     .stock-crit .stock-dot { background:var(--red-soft); } .stock-crit { color:var(--red-soft); }
+    .content-row { display:flex; gap:20px; align-items:flex-start; }
+    .content-row .table-wrap { flex:1; min-width:0; }
+    .legend-card { width:190px; flex-shrink:0; background:var(--cream); border:1.5px solid var(--cream-dark); border-radius:var(--radius-lg); box-shadow:var(--shadow-sm); padding:16px 18px; }
+    .legend-card-title { font-family:var(--font-display); font-weight:700; font-size:13px; color:var(--mocha-deep); margin-bottom:12px; }
+    .legend-item { display:flex; align-items:flex-start; gap:8px; margin-bottom:12px; }
+    .legend-item:last-child { margin-bottom:0; }
+    .legend-dot { width:9px; height:9px; border-radius:50%; margin-top:4px; flex-shrink:0; }
+    .legend-dot.ok   { background:var(--sage); }
+    .legend-dot.low  { background:#e67e22; }
+    .legend-dot.crit { background:var(--red-soft); }
+    .legend-label { font-size:12px; font-weight:700; color:var(--charcoal); }
+    .legend-desc  { font-size:11px; color:#999; margin-top:2px; line-height:1.4; }
     .tbl-btn { padding:4px 11px; border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; border:1.5px solid; transition:all .15s; background:transparent; }
     .tbl-btn-edit { border-color:var(--gold); color:var(--gold); } .tbl-btn-edit:hover { background:var(--gold); color:#fff; }
     .tbl-btn-del  { border-color:#c9a; color:#c88; } .tbl-btn-del:hover { background:var(--red-soft); border-color:var(--red-soft); color:#fff; }
@@ -735,7 +748,7 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
     <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
     <div class="brand-text"><div class="name">SmartStock</div><div class="sub">Bean There Café</div></div>
   </div>
-  <div class="header-center"><span class="portal-badge">Owner Panel</span><span class="header-view-label">Products</span></div>
+  <div class="header-center"></div>
   <div class="header-right">
     <div class="header-clock" id="clock"></div>
     <div class="header-user">
@@ -785,11 +798,19 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
       </select>
       <select class="filter-select" id="product-stock-filter" onchange="filterProducts()"><option value="">All Stock Levels</option><option value="ok">OK</option><option value="low">Low</option><option value="crit">Critical</option></select>
     </div>
-    <div class="table-wrap">
-      <table class="data-table">
-        <thead><tr><th>Image</th><th>Product Name</th><th>Category</th><th>Stock</th><th>Unit Cost</th><th>Selling Price</th><th>Supplier</th><th>Contact</th><th>Actions</th></tr></thead>
-        <tbody id="product-tbody"></tbody>
-      </table>
+    <div class="content-row">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Image</th><th>Product Name</th><th>Category</th><th>Stock</th><th>Unit Cost</th><th>Selling Price</th><th>Actions</th></tr></thead>
+          <tbody id="product-tbody"></tbody>
+        </table>
+      </div>
+      <div class="legend-card">
+        <div class="legend-card-title">Legend</div>
+        <div class="legend-item"><span class="legend-dot ok"></span><div><div class="legend-label">OK</div><div class="legend-desc">Stock at a healthy level</div></div></div>
+        <div class="legend-item"><span class="legend-dot low"></span><div><div class="legend-label">Low</div><div class="legend-desc">Running low, reorder soon</div></div></div>
+        <div class="legend-item"><span class="legend-dot crit"></span><div><div class="legend-label">Critical</div><div class="legend-desc">Reorder immediately</div></div></div>
+      </div>
     </div>
   </div>
 </div>
@@ -1068,7 +1089,7 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
     if (!tbody) return;
 
     if (products.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#aaa;padding:24px 8px;">No products yet. Click "Add Product" to add your first item.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#aaa;padding:24px 8px;">No products yet. Click "Add Product" to add your first item.</td></tr>';
       return;
     }
 
@@ -1080,7 +1101,7 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
     });
 
     if (filtered.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#aaa;padding:24px 8px;">No products match your filters.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#aaa;padding:24px 8px;">No products match your filters.</td></tr>';
       return;
     }
 
@@ -1094,8 +1115,6 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
         <td>${isMotd ? '<span class="text-muted">—</span>' : `<div class="stock-indicator stock-${p.level}"><div class="stock-dot"></div>${p.stock}</div>`}</td>
         <td class="text-mono">${isMotd ? '<span class="text-muted">—</span>' : money(p.cost)}</td>
         <td class="text-mono">${money(p.price)}</td>
-        <td>${isMotd ? '<span class="text-muted">—</span>' : p.supplier_name}</td>
-        <td class="text-mono" style="font-size:12px;">${isMotd ? '<span class="text-muted">—</span>' : p.supplier_contact}</td>
         <td style="display:flex;gap:6px;align-items:center;">
           <button class="tbl-btn tbl-btn-edit" onclick="openEditModal(${p.id})">Edit</button>
           ${isMotd ? `<button class="tbl-btn tbl-btn-edit" onclick="openRecipeModal(${p.id})">Recipe</button>` : ''}

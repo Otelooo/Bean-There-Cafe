@@ -556,6 +556,7 @@ while ($row = $prodResult->fetch_assoc()) {
       display: flex;
       align-items: center;
       justify-content: space-between;
+      position: sticky; top: var(--header-h); z-index: 500;
     }
 
     .page-strip h1 {
@@ -1195,10 +1196,7 @@ while ($row = $prodResult->fetch_assoc()) {
         <div class="sub">Bean There Café</div>
       </div>
     </div>
-    <div class="header-center">
-      <span class="portal-badge">Owner Panel</span>
-      <span class="header-view-label">Point of Sale</span>
-    </div>
+    <div class="header-center"></div>
     <div class="header-right">
       <div class="header-clock" id="clock"></div>
       <div class="header-user">

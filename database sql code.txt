@@ -43,6 +43,8 @@ CREATE TABLE `product_ingredients` (
 	`ingredient_name` VARCHAR(100) NOT NULL COLLATE 'utf8mb4_0900_ai_ci',
 	`ingredient_stock` DECIMAL(10,2) NOT NULL DEFAULT '0.00',
 	`ingredient_unit` VARCHAR(50) NOT NULL COLLATE 'utf8mb4_0900_ai_ci',
+	`ingredient_supplier` VARCHAR(100) NULL DEFAULT NULL COLLATE 'utf8mb4_0900_ai_ci',
+	`ingredient_contact` VARCHAR(100) NULL DEFAULT NULL COLLATE 'utf8mb4_0900_ai_ci',
 	PRIMARY KEY (`product_ingredients_id`) USING BTREE
 )
 COLLATE='utf8mb4_0900_ai_ci'
