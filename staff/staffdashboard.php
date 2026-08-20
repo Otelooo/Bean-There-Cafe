@@ -443,6 +443,7 @@ $stmt->close();
       display: flex;
       align-items: center;
       justify-content: space-between;
+      position: sticky; top: var(--header-h); z-index: 500;
     }
 
     .page-strip h1 {
@@ -1172,10 +1173,7 @@ $stmt->close();
         <div class="sub">Bean There Café</div>
       </div>
     </div>
-    <div class="header-center">
-      <span class="portal-badge">Staff Panel</span>
-      <span class="header-view-label">Dashboard</span>
-    </div>
+    <div class="header-center"></div>
     <div class="header-right">
       <div class="header-clock" id="clock"></div>
       
@@ -1335,10 +1333,6 @@ $stmt->close();
                 </div>
               <?php endforeach; ?>
             <?php endif; ?>
-            <button class="btn-primary" style="width:100%;justify-content:center;margin-top:4px;"
-              onclick="location.href='staff_products.php'">
-              <i class="fas fa-arrow-right"></i> Manage Products
-            </button>
           </div>
         </div>
       </div>

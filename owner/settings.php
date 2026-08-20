@@ -277,6 +277,7 @@ $stmt->close();
       background: var(--cream); border-bottom: 1px solid var(--cream-dark);
       padding: 15px 26px;
       display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: var(--header-h); z-index: 500;
     }
     .page-strip h1 { font-family: var(--font-display); font-size: 21px; font-weight: 700; color: var(--mocha-deep); }
     .page-strip .sub { font-size: 12px; color: var(--mocha-mid); margin-top: 1px; }
@@ -324,7 +325,7 @@ $stmt->close();
     <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
     <div class="brand-text"><div class="name">SmartStock</div><div class="sub">Bean There Café</div></div>
   </div>
-  <div class="header-center"><span class="portal-badge">Owner Panel</span><span class="header-view-label">System Settings</span></div>
+  <div class="header-center"></div>
   <div class="header-right">
     <div class="header-clock" id="clock"></div>
     <div class="header-user">

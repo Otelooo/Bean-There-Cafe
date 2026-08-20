@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS `product_ingredients` (
   `ingredient_name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
   `ingredient_stock` decimal(10,2) NOT NULL DEFAULT '0.00',
   `ingredient_unit` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `ingredient_supplier` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `ingredient_contact` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
   PRIMARY KEY (`product_ingredients_id`) USING BTREE
 ) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
@@ -66,6 +68,7 @@ CREATE TABLE IF NOT EXISTS `product_ingredient_items` (
   `product_ingredients_id` int NOT NULL,
   `quantity` decimal(10,2) NOT NULL DEFAULT '0.00',
   `unit` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL DEFAULT '',
+  `is_flavor_choice` tinyint(1) NOT NULL DEFAULT '0',
   PRIMARY KEY (`product_ingredient_items_id`) USING BTREE,
   KEY `idx_ingredient_items_product` (`product_id`) USING BTREE,
   KEY `fk_ingredient_items_ingredient` (`product_ingredients_id`) USING BTREE,
@@ -97,7 +100,8 @@ CREATE TABLE IF NOT EXISTS `system_settings` (
 -- Dumping structure for table bean_there_cafe.transactions
 CREATE TABLE IF NOT EXISTS `transactions` (
   `transaction_id` int NOT NULL AUTO_INCREMENT,
-  `user_id` int NOT NULL,
+  `user_id` int DEFAULT NULL,
+  `cashier_username` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
   `transaction_date` datetime NOT NULL,
   `transaction_total` decimal(10,2) NOT NULL,
   `transaction_status` enum('completed','cancelled') CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL DEFAULT 'completed',
@@ -105,7 +109,7 @@ CREATE TABLE IF NOT EXISTS `transactions` (
   `discount` decimal(10,2) NOT NULL DEFAULT '0.00',
   PRIMARY KEY (`transaction_id`) USING BTREE,
   KEY `fk_transactions_user` (`user_id`) USING BTREE,
-  CONSTRAINT `fk_transactions_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`)
+  CONSTRAINT `fk_transactions_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`) ON DELETE SET NULL
 ) ENGINE=InnoDB AUTO_INCREMENT=23 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- Data exporting was unselected.
@@ -114,14 +118,16 @@ CREATE TABLE IF NOT EXISTS `transactions` (
 CREATE TABLE IF NOT EXISTS `transaction_items` (
   `transaction_item_id` int NOT NULL AUTO_INCREMENT,
   `transaction_id` int NOT NULL,
-  `product_id` int NOT NULL,
+  `product_id` int DEFAULT NULL,
+  `product_name_snapshot` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `chosen_ingredient_name_snapshot` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
   `quantity` int NOT NULL,
   `unit_price` decimal(10,2) NOT NULL,
   `subtotal` decimal(10,2) NOT NULL,
   PRIMARY KEY (`transaction_item_id`) USING BTREE,
   KEY `fk_transaction_id` (`transaction_id`) USING BTREE,
   KEY `fk_product_id` (`product_id`) USING BTREE,
-  CONSTRAINT `fk_product_id` FOREIGN KEY (`product_id`) REFERENCES `products` (`product_id`),
+  CONSTRAINT `fk_product_id` FOREIGN KEY (`product_id`) REFERENCES `products` (`product_id`) ON DELETE SET NULL,
   CONSTRAINT `fk_transaction_id` FOREIGN KEY (`transaction_id`) REFERENCES `transactions` (`transaction_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=22 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 

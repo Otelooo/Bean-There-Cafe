@@ -46,3 +46,10 @@ ALTER TABLE transaction_items ADD COLUMN chosen_ingredient_name_snapshot VARCHAR
 -- (e.g. Cheese Powder vs BBQ vs Sour Cream) instead of an always-required
 -- ingredient. Default 0 keeps every existing recipe row "always required".
 ALTER TABLE product_ingredient_items ADD COLUMN is_flavor_choice TINYINT(1) NOT NULL DEFAULT 0 AFTER unit;
+
+
+-- Dumping structure changes for table bean_there_cafe.product_ingredients
+-- Supplier and contact are now tracked per ingredient (set when adding/editing
+-- an ingredient in Inventory) instead of per prepared product.
+ALTER TABLE product_ingredients ADD COLUMN ingredient_supplier VARCHAR(100) NULL AFTER ingredient_unit;
+ALTER TABLE product_ingredients ADD COLUMN ingredient_contact VARCHAR(100) NULL AFTER ingredient_supplier;
