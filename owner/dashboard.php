@@ -60,6 +60,16 @@ $stmt->execute();
 $bestSeller = $stmt->get_result()->fetch_assoc();
 $stmt->close();
 
+$stmt = $conn->prepare("SELECT COUNT(*) AS total, SUM(status = 'active') AS active_cnt, SUM(role = 'cafe staff') AS staff_cnt, SUM(role = 'cafe owner') AS owner_cnt FROM users");
+$stmt->execute();
+$userStatsRow = $stmt->get_result()->fetch_assoc();
+$stmt->close();
+$totalUsers = (int)$userStatsRow['total'];
+$activeUsers = (int)$userStatsRow['active_cnt'];
+$staffUsers = (int)$userStatsRow['staff_cnt'];
+$ownerUsers = (int)$userStatsRow['owner_cnt'];
+$inactiveUsers = $totalUsers - $activeUsers;
+
 $recentTransactions = [];
 $stmt = $conn->prepare("
     SELECT t.transaction_id, t.transaction_total, t.payment_method, t.transaction_status,
@@ -96,6 +106,62 @@ while ($row = $result->fetch_assoc()) {
     $stockAlerts[] = $row;
 }
 $stmt->close();
+
+// ── Revenue overview: this month, this year, and each vs. its prior period ──
+$stmt = $conn->prepare("SELECT COALESCE(SUM(transaction_total),0) AS total FROM transactions WHERE transaction_status = 'completed' AND YEAR(transaction_date) = YEAR(CURDATE()) AND MONTH(transaction_date) = MONTH(CURDATE())");
+$stmt->execute();
+$monthRevenue = (float)$stmt->get_result()->fetch_assoc()['total'];
+$stmt->close();
+
+$stmt = $conn->prepare("SELECT COALESCE(SUM(transaction_total),0) AS total FROM transactions WHERE transaction_status = 'completed' AND YEAR(transaction_date) = YEAR(CURDATE() - INTERVAL 1 MONTH) AND MONTH(transaction_date) = MONTH(CURDATE() - INTERVAL 1 MONTH)");
+$stmt->execute();
+$lastMonthRevenue = (float)$stmt->get_result()->fetch_assoc()['total'];
+$stmt->close();
+$monthChangePct = $lastMonthRevenue > 0 ? (($monthRevenue - $lastMonthRevenue) / $lastMonthRevenue) * 100 : null;
+
+$stmt = $conn->prepare("SELECT COALESCE(SUM(transaction_total),0) AS total FROM transactions WHERE transaction_status = 'completed' AND YEAR(transaction_date) = YEAR(CURDATE())");
+$stmt->execute();
+$yearRevenue = (float)$stmt->get_result()->fetch_assoc()['total'];
+$stmt->close();
+
+$stmt = $conn->prepare("SELECT COALESCE(SUM(transaction_total),0) AS total FROM transactions WHERE transaction_status = 'completed' AND YEAR(transaction_date) = YEAR(CURDATE()) - 1");
+$stmt->execute();
+$lastYearRevenue = (float)$stmt->get_result()->fetch_assoc()['total'];
+$stmt->close();
+$yearChangePct = $lastYearRevenue > 0 ? (($yearRevenue - $lastYearRevenue) / $lastYearRevenue) * 100 : null;
+
+$monthsElapsedThisYear = (int)date('n');
+$avgMonthlyThisYear = $monthsElapsedThisYear > 0 ? $yearRevenue / $monthsElapsedThisYear : 0.0;
+
+// Last 6 months (oldest to newest, ending with the current month) for the trend chart.
+$monthlyTotalsByYm = [];
+$stmt = $conn->prepare("
+    SELECT DATE_FORMAT(transaction_date, '%Y-%m') AS ym, COALESCE(SUM(transaction_total),0) AS total
+    FROM transactions
+    WHERE transaction_status = 'completed'
+      AND transaction_date >= DATE_SUB(DATE_FORMAT(CURDATE(), '%Y-%m-01'), INTERVAL 5 MONTH)
+    GROUP BY ym
+");
+$stmt->execute();
+$result = $stmt->get_result();
+while ($row = $result->fetch_assoc()) {
+    $monthlyTotalsByYm[$row['ym']] = (float)$row['total'];
+}
+$stmt->close();
+
+$monthlyTrend = [];
+for ($i = 5; $i >= 0; $i--) {
+    $ts = strtotime("-{$i} month", strtotime(date('Y-m-01')));
+    $ym = date('Y-m', $ts);
+    $monthlyTrend[] = [
+        'label' => date('M', $ts),
+        'total' => $monthlyTotalsByYm[$ym] ?? 0.0,
+    ];
+}
+$maxMonthlyTotal = max(array_column($monthlyTrend, 'total'));
+if ($maxMonthlyTotal <= 0) {
+    $maxMonthlyTotal = 1.0;
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -937,6 +1003,57 @@ $stmt->close();
       font-size: 11px;
       color: var(--sage);
       margin-top: 3px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* ── REVENUE TREND BAR CHART ── */
+    .bar-chart {
+      display: flex;
+      align-items: flex-end;
+      gap: 14px;
+      height: 170px;
+      padding-top: 10px;
+      border-top: 1px solid var(--cream-dark);
+    }
+
+    .bar-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-end;
+      height: 100%;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .bar-value {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--mocha-mid);
+      font-family: var(--font-mono);
+      white-space: nowrap;
+    }
+
+    .bar {
+      width: 100%;
+      max-width: 36px;
+      background: linear-gradient(180deg, var(--gold-light), var(--gold));
+      border-radius: 6px 6px 2px 2px;
+      transition: height .4s ease;
+      min-height: 4px;
+    }
+
+    .bar.bar-current {
+      background: linear-gradient(180deg, #9ecba2, var(--sage));
+    }
+
+    .bar-label {
+      font-size: 11px;
+      color: #999;
+      font-weight: 600;
     }
 
     /* ── TEXT UTILS ── */
@@ -1256,6 +1373,65 @@ $stmt->close();
             <div class="kpi-value" style="font-size:18px;line-height:1.2;margin-top:3px;">—</div>
             <div class="kpi-sub">No sales recorded yet today</div>
           <?php endif; ?>
+        </div>
+        <div class="kpi-card" style="--accent:#8e44ad;--accent-bg:rgba(142,68,173,.10);">
+          <div class="kpi-icon"><i class="fas fa-users"></i></div>
+          <div class="kpi-label">Total Users</div>
+          <div class="kpi-value"><?= $totalUsers ?></div>
+          <div class="kpi-sub"><?= $staffUsers ?> staff, <?= $ownerUsers ?> owner<?= $ownerUsers === 1 ? '' : 's' ?></div>
+          <?php if ($inactiveUsers > 0): ?>
+            <div class="kpi-trend warn"><i class="fas fa-user-slash"></i> <?= $inactiveUsers ?> inactive</div>
+          <?php else: ?>
+            <div class="kpi-trend up"><i class="fas fa-circle-check"></i> All accounts active</div>
+          <?php endif; ?>
+        </div>
+      </div>
+
+      <div class="chart-card" style="margin-bottom:18px;">
+        <div class="chart-title"><i class="fas fa-chart-column" style="color:var(--gold);margin-right:6px;"></i>Revenue Overview</div>
+        <div class="chart-sub">Monthly and yearly totals, with a 6-month trend</div>
+
+        <div class="report-kpis">
+          <div class="rpt-mini">
+            <div class="rpt-mini-label">This Month</div>
+            <div class="rpt-mini-value">₱<?= number_format($monthRevenue, 2) ?></div>
+            <?php if ($monthChangePct === null): ?>
+              <div class="rpt-mini-trend" style="color:#aaa;"><i class="fas fa-minus"></i> No sales last month</div>
+            <?php else: ?>
+              <div class="rpt-mini-trend" style="color:<?= $monthChangePct >= 0 ? 'var(--sage)' : 'var(--red-soft)' ?>;">
+                <i class="fas <?= $monthChangePct >= 0 ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down' ?>"></i>
+                <?= ($monthChangePct >= 0 ? '+' : '') . number_format($monthChangePct, 1) ?>% vs last month
+              </div>
+            <?php endif; ?>
+          </div>
+          <div class="rpt-mini">
+            <div class="rpt-mini-label">This Year</div>
+            <div class="rpt-mini-value">₱<?= number_format($yearRevenue, 2) ?></div>
+            <?php if ($yearChangePct === null): ?>
+              <div class="rpt-mini-trend" style="color:#aaa;"><i class="fas fa-minus"></i> No sales last year</div>
+            <?php else: ?>
+              <div class="rpt-mini-trend" style="color:<?= $yearChangePct >= 0 ? 'var(--sage)' : 'var(--red-soft)' ?>;">
+                <i class="fas <?= $yearChangePct >= 0 ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down' ?>"></i>
+                <?= ($yearChangePct >= 0 ? '+' : '') . number_format($yearChangePct, 1) ?>% vs last year
+              </div>
+            <?php endif; ?>
+          </div>
+          <div class="rpt-mini">
+            <div class="rpt-mini-label">Avg. Monthly (<?= date('Y') ?>)</div>
+            <div class="rpt-mini-value">₱<?= number_format($avgMonthlyThisYear, 2) ?></div>
+            <div class="rpt-mini-trend" style="color:#aaa;"><i class="fas fa-calendar-days"></i> Based on <?= $monthsElapsedThisYear ?> month<?= $monthsElapsedThisYear === 1 ? '' : 's' ?></div>
+          </div>
+        </div>
+
+        <div class="bar-chart">
+          <?php foreach ($monthlyTrend as $i => $m): ?>
+            <?php $heightPct = max(4, round(($m['total'] / $maxMonthlyTotal) * 100)); ?>
+            <div class="bar-col">
+              <div class="bar-value">₱<?= number_format($m['total'], 0) ?></div>
+              <div class="bar<?= $i === count($monthlyTrend) - 1 ? ' bar-current' : '' ?>" style="height:<?= $heightPct ?>%;"></div>
+              <div class="bar-label"><?= htmlspecialchars($m['label']) ?></div>
+            </div>
+          <?php endforeach; ?>
         </div>
       </div>
 

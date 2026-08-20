@@ -2,6 +2,7 @@
 session_start();
 require_once __DIR__ . '/../db_connect.php';
 require_once __DIR__ . '/../settings_helper.php';
+require_once __DIR__ . '/../unit_helper.php';
 
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'cafe owner') {
     header('Location: ../signin.php');
@@ -87,11 +88,16 @@ $ingredients = [];
 $result = $conn->query('SELECT product_ingredients_id, ingredient_name, ingredient_stock, ingredient_unit, ingredient_supplier, ingredient_contact FROM product_ingredients ORDER BY ingredient_name');
 while ($row = $result->fetch_assoc()) {
     $stock = (float)$row['ingredient_stock'];
+    // Recognized units (kg, ml, piece, etc.) normalize to their canonical key so the Edit form's
+    // dropdown can preselect the right option; anything unrecognized (old free-typed text) is
+    // passed through as-is so it still displays, but won't match a dropdown option until re-saved.
+    $unitKey = normalize_unit_key($row['ingredient_unit']);
     $ingredients[] = [
         'id' => (int)$row['product_ingredients_id'],
         'name' => $row['ingredient_name'],
         'stock' => $stock,
-        'unit' => $row['ingredient_unit'],
+        'unit' => $unitKey ?? $row['ingredient_unit'],
+        'unit_label' => $unitKey ? unit_label($unitKey) : $row['ingredient_unit'],
         'supplier' => $row['ingredient_supplier'] ?? '',
         'contact' => $row['ingredient_contact'] ?? '',
         'level' => ingredient_stock_level($stock, $criticalStockThreshold, $lowStockThreshold),
@@ -394,7 +400,18 @@ $criticalCount = count(array_filter($ingredients, fn($i) => $i['level'] === 'cri
       <div class="modal-field"><label>Ingredient Name</label><input type="text" name="name" placeholder="e.g. Espresso Beans" required /></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
         <div class="modal-field"><label>Stock Quantity</label><input type="number" name="stock" min="0" step="0.01" placeholder="0" required /></div>
-        <div class="modal-field"><label>Unit</label><input type="text" name="unit" placeholder="kg, L, pcs…" required /></div>
+        <div class="modal-field"><label>Unit</label>
+          <select name="unit" required>
+            <option value="">Select unit…</option>
+            <?php foreach (unit_options_grouped() as $family => $opts): ?>
+              <optgroup label="<?= htmlspecialchars(UNIT_FAMILY_LABELS[$family] ?? ucfirst($family)) ?>">
+                <?php foreach ($opts as $opt): ?>
+                  <option value="<?= htmlspecialchars($opt['key']) ?>"><?= htmlspecialchars($opt['label']) ?></option>
+                <?php endforeach; ?>
+              </optgroup>
+            <?php endforeach; ?>
+          </select>
+        </div>
       </div>
       <div class="modal-field"><label>Supplier Name</label><input type="text" name="supplier_name" placeholder="Supplier company" /></div>
       <div class="modal-field"><label>Supplier Contact</label><input type="text" name="supplier_contact" placeholder="09XX-XXX-XXXX" /></div>
@@ -414,7 +431,18 @@ $criticalCount = count(array_filter($ingredients, fn($i) => $i['level'] === 'cri
       <div class="modal-field"><label>Ingredient Name</label><input type="text" name="name" id="edit-name" required /></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
         <div class="modal-field"><label>Stock Quantity</label><input type="number" name="stock" id="edit-stock" min="0" step="0.01" required /></div>
-        <div class="modal-field"><label>Unit</label><input type="text" name="unit" id="edit-unit" required /></div>
+        <div class="modal-field"><label>Unit</label>
+          <select name="unit" id="edit-unit" required>
+            <option value="">Select unit…</option>
+            <?php foreach (unit_options_grouped() as $family => $opts): ?>
+              <optgroup label="<?= htmlspecialchars(UNIT_FAMILY_LABELS[$family] ?? ucfirst($family)) ?>">
+                <?php foreach ($opts as $opt): ?>
+                  <option value="<?= htmlspecialchars($opt['key']) ?>"><?= htmlspecialchars($opt['label']) ?></option>
+                <?php endforeach; ?>
+              </optgroup>
+            <?php endforeach; ?>
+          </select>
+        </div>
       </div>
       <div class="modal-field"><label>Supplier Name</label><input type="text" name="supplier_name" id="edit-supplier-name" /></div>
       <div class="modal-field"><label>Supplier Contact</label><input type="text" name="supplier_contact" id="edit-supplier-contact" /></div>
@@ -480,7 +508,7 @@ $criticalCount = count(array_filter($ingredients, fn($i) => $i['level'] === 'cri
       <tr>
         <td style="font-weight:600;">${i.name}</td>
         <td><div class="stock-indicator stock-${i.level}"><div class="stock-dot"></div>${qty(i.stock)}</div></td>
-        <td class="text-mono">${i.unit}</td>
+        <td class="text-mono">${i.unit_label}</td>
         <td>${i.supplier ? i.supplier : '<span class="text-muted">—</span>'}</td>
         <td class="text-mono" style="font-size:12px;">${i.contact ? i.contact : '<span class="text-muted">—</span>'}</td>
         <td><span class="status-pill ${i.level === 'ok' ? 'pill-success' : i.level === 'low' ? 'pill-warn' : 'pill-red'}">${levelLabels[i.level]}</span></td>

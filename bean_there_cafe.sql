@@ -78,6 +78,20 @@ CREATE TABLE IF NOT EXISTS `product_ingredient_items` (
 
 -- Data exporting was unselected.
 
+-- Dumping structure for table bean_there_cafe.product_variants
+CREATE TABLE IF NOT EXISTS `product_variants` (
+  `product_variant_id` int NOT NULL AUTO_INCREMENT,
+  `product_id` int NOT NULL,
+  `variant_name` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
+  `variant_price` decimal(10,2) NOT NULL,
+  `sort_order` int NOT NULL DEFAULT '0',
+  PRIMARY KEY (`product_variant_id`) USING BTREE,
+  KEY `idx_variant_product` (`product_id`) USING BTREE,
+  CONSTRAINT `fk_variant_product` FOREIGN KEY (`product_id`) REFERENCES `products` (`product_id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- Data exporting was unselected.
+
 -- Dumping structure for table bean_there_cafe.product_supplier
 CREATE TABLE IF NOT EXISTS `product_supplier` (
   `product_supplier_id` int NOT NULL AUTO_INCREMENT,
@@ -121,6 +135,7 @@ CREATE TABLE IF NOT EXISTS `transaction_items` (
   `product_id` int DEFAULT NULL,
   `product_name_snapshot` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
   `chosen_ingredient_name_snapshot` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `variant_name_snapshot` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
   `quantity` int NOT NULL,
   `unit_price` decimal(10,2) NOT NULL,
   `subtotal` decimal(10,2) NOT NULL,

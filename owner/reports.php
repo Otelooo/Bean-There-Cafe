@@ -148,7 +148,7 @@ function build_sales_report(mysqli $conn, string $period, int $categoryId, strin
         }
     } else {
         $sqlTrend = "SELECT transaction_id, transaction_date, transaction_total
-                     FROM transactions
+                     FROM transactions t
                      WHERE transaction_status = 'completed' AND DATE(transaction_date) BETWEEN ? AND ?" . $timeSql;
         $stmt = $conn->prepare($sqlTrend);
         if ($allDay) {
