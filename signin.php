@@ -4,6 +4,11 @@ require_once __DIR__ . '/db_connect.php';
 
 $error = '';
 $username = '';
+$successMessage = '';
+
+if (isset($_GET['signup']) && $_GET['signup'] === 'success') {
+    $successMessage = 'Admin account created successfully. You can now sign in.';
+}
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = trim($_POST['username'] ?? '');
@@ -297,6 +302,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             font-size: 13px;
         }
 
+        .create-account {
+            text-align: center;
+            margin-top: 24px;
+            padding-top: 20px;
+            border-top: 1px solid var(--cream-dark);
+        }
+
+        .create-link {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--gold);
+            text-decoration: none;
+        }
+
+        .create-link:hover {
+            color: var(--gold-light);
+            text-decoration: underline;
+        }
+
         @media (max-width: 480px) {
             .signin-container {
                 padding: 32px 24px;
@@ -337,9 +361,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </div>
         <?php endif; ?>
 
-        <?php if (isset($_GET['created'])): ?>
-        <div style="background:rgba(122,158,126,.14);color:#4d7a52;padding:10px 14px;border-radius:8px;margin-bottom:20px;font-size:14px;text-align:center;">
-            Admin account created. You can now sign in.
+        <?php if ($successMessage): ?>
+        <div style="background:#eaf7ee;color:#2e7d32;padding:10px 14px;border-radius:8px;margin-bottom:20px;font-size:14px;text-align:center;">
+            <?= htmlspecialchars($successMessage) ?>
         </div>
         <?php endif; ?>
 
@@ -368,6 +392,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="links-row">
             <a href="#" class="link">Forgot Password?</a>
             <a href="#" class="link">Need Help?</a>
+        </div>
+
+        <div class="create-account">
+            <p style="color: var(--charcoal-mid); font-size: 14px; margin-bottom: 8px;">
+                Don't have an account?
+            </p>
+            <a href="signup.php" class="create-link">
+                Create Admin Account
+            </a>
         </div>
     </main>
 </body>
