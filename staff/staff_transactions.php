@@ -648,11 +648,9 @@ while ($row = $prodResult->fetch_assoc()) {
 
     /* ── MAIN ── */
     .pos-main {
-      display: grid;
-      grid-template-columns: 1fr 380px;
       min-height: calc(100vh - 76px);
-      gap: 24px;
       padding: 24px;
+      padding-bottom: 110px;
     }
 
     /* ── PRODUCTS ── */
@@ -751,104 +749,62 @@ while ($row = $prodResult->fetch_assoc()) {
     }
 
     /* ── CART ── */
-    .cart-section {
+    .mini-cart {
+      position: fixed;
+      left: calc(var(--sidebar-w) + 24px);
+      bottom: 24px;
+      z-index: 500;
       display: flex;
-      flex-direction: column;
-      gap: 20px;
-    }
-
-    .cart-card {
+      align-items: center;
+      gap: 16px;
       background: var(--cream);
       border: 1.5px solid var(--cream-dark);
       border-radius: var(--radius-lg);
-      padding: 24px;
-      box-shadow: var(--shadow-sm);
+      padding: 12px 16px;
+      box-shadow: var(--shadow-lg);
     }
 
-    .cart-empty {
-      text-align: center;
-      color: var(--charcoal-mid);
-      font-style: italic;
-      padding: 40px 20px;
-    }
-
-    .cart-item {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 12px 0;
-      border-bottom: 1px solid var(--cream-dark);
-      gap: 12px;
-    }
-
-    .cart-item:last-child {
-      border-bottom: none;
-      padding-bottom: 0;
-    }
-
-    .item-left {
-      flex: 1;
-    }
-
-    .item-details {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-
-    .item-name {
-      font-weight: 600;
-      color: var(--mocha-deep);
-    }
-
-    .item-qty-price {
-      font-size: 13px;
-      color: var(--charcoal-mid);
-    }
-
-    .qty-controls {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      background: var(--cream-light);
-      padding: 4px 8px;
+    .mini-cart-clear {
+      width: 40px;
+      height: 40px;
+      flex-shrink: 0;
       border-radius: var(--radius);
-      border: 1px solid var(--cream-dark);
-    }
-
-    .qty-btn {
-      width: 28px;
-      height: 28px;
-      border: none;
-      background: var(--gold);
-      color: var(--cream);
-      border-radius: 6px;
-      font-weight: 700;
-      font-size: 14px;
+      border: 1.5px solid var(--cream-dark);
+      background: transparent;
+      color: var(--red-soft);
+      font-size: 15px;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
+      transition: all .2s;
     }
 
-    .qty-btn:hover {
-      background: var(--gold-light);
+    .mini-cart-clear:hover {
+      background: var(--red-soft);
+      border-color: var(--red-soft);
+      color: #fff;
     }
 
-    .qty-display {
-      font-family: var(--font-mono);
+    .mini-cart-total {
+      display: flex;
+      flex-direction: column;
+      line-height: 1.25;
+    }
+
+    .mini-cart-total-label {
+      font-size: 10px;
       font-weight: 700;
-      min-width: 24px;
-      text-align: center;
-      font-size: 14px;
+      letter-spacing: .8px;
+      text-transform: uppercase;
+      color: #888;
     }
 
-    .item-total {
+    .mini-cart-total-value {
       font-family: var(--font-mono);
-      font-weight: 700;
+      font-size: 20px;
+      font-weight: 800;
       color: var(--mocha-deep);
-      font-size: 15px;
-      white-space: nowrap;
     }
 
     .cart-total-row {
@@ -874,22 +830,21 @@ while ($row = $prodResult->fetch_assoc()) {
     }
 
     .checkout-btn {
-      width: 100%;
-      padding: 20px;
+      padding: 14px 24px;
       background: var(--gold);
       color: var(--mocha-deep);
       border: none;
-      border-radius: var(--radius-lg);
+      border-radius: var(--radius);
       font-family: var(--font-body);
-      font-size: 18px;
+      font-size: 15px;
       font-weight: 700;
       cursor: pointer;
       transition: all .3s;
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 12px;
-      margin-top: 20px;
+      gap: 10px;
+      white-space: nowrap;
     }
 
     .checkout-btn:hover:not(:disabled) {
@@ -1179,8 +1134,8 @@ while ($row = $prodResult->fetch_assoc()) {
 
     @media (max-width: 1024px) {
       .pos-main {
-        grid-template-columns: 1fr;
         padding: 16px;
+        padding-bottom: 110px;
       }
     }
   </style>
@@ -1215,6 +1170,7 @@ while ($row = $prodResult->fetch_assoc()) {
     <a href="staffdashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
     <a href="staff_transactions.php" class="nav-item active"><i class="fas fa-cash-register"></i> Transaction</a>
     <a href="staff_products.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Products</a>
+    <a href="staff_inventory.php" class="nav-item"><i class="fas fa-warehouse"></i> Inventory</a>
     <a href="staff_reports.php" class="nav-item"><i class="fas fa-chart-bar"></i>Sales Report</a>
     <hr class="sidebar-divider" />
     
@@ -1251,22 +1207,15 @@ while ($row = $prodResult->fetch_assoc()) {
           <div class="products-grid" id="products-grid"></div>
           <script id="products-data" type="application/json"><?= json_encode($products, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?></script>
         </section>
-        <section class="cart-section">
-          <div class="cart-card">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-              <h2
-                style="font-family: var(--font-display); font-size: 18px; color: var(--mocha-deep); margin: 0; display: flex; align-items: center; gap: 8px;">
-                <i class="fas fa-receipt" style="color: var(--sage);"></i>Cart
-              </h2>
-              <button id="clear-cart"
-                style="background: var(--red-soft); color: white; padding: 6px 12px; border-radius: 6px; font-size: 12px; border: none; cursor: pointer; font-weight: 600;">Clear</button>
-            </div>
-            <div id="cart-items"></div>
-            <div id="cart-totals"></div>
-            <button id="checkout-btn" class="checkout-btn" disabled><i class="fas fa-credit-card"></i> Checkout</button>
-          </div>
-        </section>
       </main>
+      <div class="mini-cart" id="mini-cart">
+        <button id="clear-cart" class="mini-cart-clear" title="Clear cart"><i class="fas fa-trash"></i></button>
+        <div class="mini-cart-total">
+          <span class="mini-cart-total-label">Total</span>
+          <span class="mini-cart-total-value" id="mini-cart-total-value">₱0.00</span>
+        </div>
+        <button id="checkout-btn" class="checkout-btn" disabled><i class="fas fa-credit-card"></i> Checkout</button>
+      </div>
       <div id="flavor-choice-modal" class="modal-overlay">
         <div class="modal-box" style="max-width: 360px;">
           <div class="modal-header">
@@ -1383,8 +1332,7 @@ while ($row = $prodResult->fetch_assoc()) {
         const DISCOUNT_RATE = <?= (float)$settings['discount_rate'] ?>;
         // DOM
         const productsGrid = document.getElementById('products-grid');
-        const cartItems = document.getElementById('cart-items');
-        const cartTotals = document.getElementById('cart-totals');
+        const miniCartTotal = document.getElementById('mini-cart-total-value');
         const cartBadge = document.getElementById('cart-count');
         const checkoutBtn = document.getElementById('checkout-btn');
         const clearCartBtn = document.getElementById('clear-cart');
@@ -1516,55 +1464,11 @@ while ($row = $prodResult->fetch_assoc()) {
           updateBadge();
         }
         function renderCart() {
-          if (cart.length === 0) {
-            cartItems.innerHTML = '<div class="cart-empty"><i class="fas fa-shopping-cart" style="font-size: 48px; color: #ccc; margin-bottom: 12px;"></i>Add items to get started</div>';
-            cartTotals.innerHTML = '';
-            checkoutBtn.disabled = true;
-            return;
-          }
-
-          cartItems.innerHTML = cart.map(item => {
-            const total = item.price * item.qty;
-            return `
-      <div class="cart-item">
-        <div class="item-left">
-          <div class="item-details">
-            <div class="item-name">${item.name}${item.flavor_name ? ` <span style="color:#aaa;font-weight:400;">(${item.flavor_name})</span>` : ''}</div>
-            <div class="item-qty-price">₱${item.price.toLocaleString()} each</div>
-          </div>
-        </div>
-        <div style="display: flex; align-items: center; gap: 12px;">
-          <div class="qty-controls">
-            <button class="qty-btn" onclick="updateQty('${item.cartKey}', -1)">−</button>
-            <div class="qty-display">${item.qty}</div>
-            <button class="qty-btn" onclick="updateQty('${item.cartKey}', 1)">+</button>
-          </div>
-          <div class="item-total">₱${total.toLocaleString()}</div>
-        </div>
-      </div>
-    `;
-          }).join('');
-
-          // NEW LOGIC: Price is already the Total
+          // The persistent cart is now a compact bar (Clear / Total / Checkout only) — the
+          // itemized breakdown still shows up in the Checkout modal via renderOrderSummary().
           const total = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
-          const subtotal = total / (1 + TAX_RATE); // Extracting net price
-          const tax = total - subtotal;           // Extracting tax amount
-
-          cartTotals.innerHTML = `
-    <div class="cart-total-row">
-      <span class="total-label">Subtotal (Net of VAT)</span>
-      <span style="font-family: var(--font-mono); font-weight: 700;">₱${subtotal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-    </div>
-    <div class="cart-total-row">
-      <span class="total-label">Included VAT (12%)</span>
-      <span style="font-family: var(--font-mono); font-weight: 700;">₱${tax.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-    </div>
-    <div class="cart-total-row">
-      <span class="grand-total">Total</span>
-      <div style="font-family: var(--font-mono); font-size: 24px; font-weight: 800; color: var(--gold);">₱${total.toLocaleString()}</div>
-    </div>
-  `;
-          checkoutBtn.disabled = false;
+          miniCartTotal.textContent = '₱' + total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          checkoutBtn.disabled = cart.length === 0;
         }
         function updateBadge() {
           if (!cartBadge) return;

@@ -756,6 +756,7 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
       <span class="nav-badge"><?= $criticalCount ?></span>
     <?php endif; ?>
   </a>
+  <a href="staff_inventory.php" class="nav-item"><i class="fas fa-warehouse"></i> Inventory</a>
   <a href="staff_reports.php" class="nav-item"><i class="fas fa-chart-bar"></i> Sales Report</a>
   <hr class="sidebar-divider"/>
 </nav>
