@@ -2,6 +2,7 @@
 session_start();
 require_once __DIR__ . '/../db_connect.php';
 require_once __DIR__ . '/../settings_helper.php';
+require_once __DIR__ . '/../unit_helper.php';
 
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'cafe owner') {
     header('Location: ../signin.php');
@@ -110,10 +111,10 @@ function save_product_recipe(mysqli $conn, int $productId, string $productType, 
         if (!$ingredientRow) {
             continue;
         }
-        $unit = trim($units[$i] ?? '');
-        if ($unit === '') {
-            $unit = $ingredientRow['ingredient_unit'];
-        }
+        $unitKey = normalize_unit_key(trim($units[$i] ?? ''));
+        // An unrecognized/blank unit falls back to the ingredient's own unit, so the recipe
+        // quantity always ends up expressed in something convert_quantity() can work with.
+        $unit = $unitKey ?? (normalize_unit_key($ingredientRow['ingredient_unit']) ?? $ingredientRow['ingredient_unit']);
         $isChoice = !empty($choiceFlags[$i]) ? 1 : 0;
         $ins->bind_param('iidsi', $productId, $ingredientId, $qty, $unit, $isChoice);
         $ins->execute();
@@ -218,7 +219,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($name === '' || !is_numeric($price) || (float)$price < 0) {
             $msg = 'Please fill in all product fields with valid values.';
             $msgType = 'warn';
-        } elseif ($isPrepared && (!is_numeric($stock) || (int)$stock < 0 || !is_numeric($cost) || (float)$cost < 0)) {
+        } elseif (!is_numeric($stock) || (int)$stock < 0 || !is_numeric($cost) || (float)$cost < 0) {
             $msg = 'Please fill in all product fields with valid values.';
             $msgType = 'warn';
         } else {
@@ -226,14 +227,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $categoryId = resolve_category_id($conn, $_POST['category'] ?? '');
                 $priceVal = (float)$price;
                 $newImagePath = handle_product_image_upload($_FILES['product_image'] ?? null);
+                // Made to Order products still record a stock count and unit cost for reference,
+                // but neither one gates checkout availability — that's governed by the recipe's
+                // ingredient stock instead (see the ingredient check in transactions.php).
+                $stockInt = (int)$stock;
+                $costVal = (float)$cost;
 
                 if ($isPrepared) {
-                    $stockInt = (int)$stock;
-                    $costVal = (float)$cost;
                     $supplierId = resolve_supplier_id($conn, $_POST['supplier_name'] ?? '', $_POST['supplier_contact'] ?? '');
                 } else {
-                    $stockInt = null;
-                    $costVal = 0.00;
                     $supplierId = resolve_inhouse_supplier_id($conn);
                 }
 
@@ -393,8 +395,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $msg = 'Selected ingredient no longer exists.';
                 $msgType = 'warn';
             } else {
-                $chosenUnit = trim($_POST['unit'] ?? '');
-                $unit = $chosenUnit !== '' ? $chosenUnit : $ingRow['ingredient_unit'];
+                $chosenUnitKey = normalize_unit_key(trim($_POST['unit'] ?? ''));
+                $unit = $chosenUnitKey ?? (normalize_unit_key($ingRow['ingredient_unit']) ?? $ingRow['ingredient_unit']);
                 $isChoice = !empty($_POST['is_choice']) ? 1 : 0;
                 $existing = $conn->prepare('SELECT product_ingredient_items_id FROM product_ingredient_items WHERE product_id = ? AND product_ingredients_id = ?');
                 $existing->bind_param('ii', $productId, $ingredientId);
@@ -427,6 +429,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $stmt->execute();
         $stmt->close();
         header('Location: products.php?msg=' . urlencode('Ingredient removed from recipe.') . '&type=success&recipe=' . $productId);
+        exit;
+    } elseif ($action === 'variant_add') {
+        // Sizes/options (e.g. Small/Medium/Large, Hot/Iced) each carry their own selling price —
+        // when a product has at least one, the cashier must pick one at checkout instead of using
+        // the product's base price (see the size picker in transactions.php).
+        $productId = (int)($_POST['product_id'] ?? 0);
+        $variantName = trim($_POST['variant_name'] ?? '');
+        $variantPrice = $_POST['variant_price'] ?? '';
+
+        if ($productId <= 0 || $variantName === '' || !is_numeric($variantPrice) || (float)$variantPrice < 0) {
+            $msg = 'Please enter a valid size/option name and price.';
+            $msgType = 'warn';
+        } else {
+            $priceVal = (float)$variantPrice;
+            $sortStmt = $conn->prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_sort FROM product_variants WHERE product_id = ?');
+            $sortStmt->bind_param('i', $productId);
+            $sortStmt->execute();
+            $nextSort = (int)$sortStmt->get_result()->fetch_assoc()['next_sort'];
+            $sortStmt->close();
+
+            $ins = $conn->prepare('INSERT INTO product_variants (product_id, variant_name, variant_price, sort_order) VALUES (?, ?, ?, ?)');
+            $ins->bind_param('isdi', $productId, $variantName, $priceVal, $nextSort);
+            $ins->execute();
+            $ins->close();
+            $msg = 'Size/option added.';
+        }
+        header('Location: products.php?msg=' . urlencode($msg) . '&type=' . urlencode($msgType) . '&sizes=' . $productId);
+        exit;
+    } elseif ($action === 'variant_remove') {
+        $variantId = (int)($_POST['variant_id'] ?? 0);
+        $productId = (int)($_POST['product_id'] ?? 0);
+        $stmt = $conn->prepare('DELETE FROM product_variants WHERE product_variant_id = ?');
+        $stmt->bind_param('i', $variantId);
+        $stmt->execute();
+        $stmt->close();
+        header('Location: products.php?msg=' . urlencode('Size/option removed.') . '&type=success&sizes=' . $productId);
         exit;
     }
 
@@ -469,12 +507,18 @@ while ($row = $catResult->fetch_assoc()) {
 $ingredients = [];
 $ingResult = $conn->query('SELECT product_ingredients_id, ingredient_name, ingredient_unit FROM product_ingredients ORDER BY ingredient_name');
 while ($row = $ingResult->fetch_assoc()) {
+    // Normalize to a canonical unit key so the recipe form can convert between it and whatever
+    // unit the recipe line itself is entered in (e.g. ingredient stocked in Liters, recipe in Milliliters).
+    $unitKey = normalize_unit_key($row['ingredient_unit']);
+    $row['ingredient_unit'] = $unitKey ?? $row['ingredient_unit'];
+    $row['ingredient_unit_label'] = $unitKey ? unit_label($unitKey) : $row['ingredient_unit'];
     $ingredients[] = $row;
 }
 
-// Display-only units offered on each recipe line (e.g. "2 Tablespoons of Sugar") — independent
-// of whatever unit the ingredient's own stock is tracked in.
-$measurementUnits = ['Tablespoon', 'Pair', 'Slices', 'Grams', 'Piece', 'Pieces', 'Strips', 'Cup', 'Ml'];
+// Units offered on each recipe line, grouped by family (Weight/Volume/Count) — a recipe line can
+// use a different unit than the ingredient's own stock unit as long as they're the same family;
+// checkout converts between them automatically.
+$unitGroups = unit_options_grouped();
 
 $recipesByProduct = [];
 $recipeResult = $conn->query('
@@ -493,6 +537,16 @@ while ($row = $recipeResult->fetch_assoc()) {
         'quantity' => (float)$row['quantity'],
         'unit' => $row['unit'],
         'is_choice' => (bool)$row['is_flavor_choice'],
+    ];
+}
+
+$variantsByProduct = [];
+$variantResult = $conn->query('SELECT product_variant_id, product_id, variant_name, variant_price FROM product_variants ORDER BY product_id, sort_order, product_variant_id');
+while ($row = $variantResult->fetch_assoc()) {
+    $variantsByProduct[(int)$row['product_id']][] = [
+        'variant_id' => (int)$row['product_variant_id'],
+        'name' => $row['variant_name'],
+        'price' => (float)$row['variant_price'],
     ];
 }
 
@@ -523,10 +577,12 @@ while ($row = $prodResult->fetch_assoc()) {
         'supplier_name' => $row['supplier_name'],
         'supplier_contact' => $row['supplier_contact'],
         'recipe' => $recipesByProduct[$pid] ?? [],
+        'variants' => $variantsByProduct[$pid] ?? [],
     ];
 }
 
 $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
+$reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -660,6 +716,7 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
       background: var(--cream); border-bottom: 1px solid var(--cream-dark);
       padding: 15px 26px;
       display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: var(--header-h); z-index: 500;
     }
     .page-strip h1 { font-family: var(--font-display); font-size: 21px; font-weight: 700; color: var(--mocha-deep); }
     .page-strip .sub { font-size: 12px; color: var(--mocha-mid); margin-top: 1px; }
@@ -682,6 +739,18 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
     .stock-ok   .stock-dot { background:var(--sage); } .stock-ok   { color:var(--sage); }
     .stock-low  .stock-dot { background:#e67e22; } .stock-low  { color:#e67e22; }
     .stock-crit .stock-dot { background:var(--red-soft); } .stock-crit { color:var(--red-soft); }
+    .content-row { display:flex; gap:20px; align-items:flex-start; }
+    .content-row .table-wrap { flex:1; min-width:0; }
+    .legend-card { width:190px; flex-shrink:0; background:var(--cream); border:1.5px solid var(--cream-dark); border-radius:var(--radius-lg); box-shadow:var(--shadow-sm); padding:16px 18px; }
+    .legend-card-title { font-family:var(--font-display); font-weight:700; font-size:13px; color:var(--mocha-deep); margin-bottom:12px; }
+    .legend-item { display:flex; align-items:flex-start; gap:8px; margin-bottom:12px; }
+    .legend-item:last-child { margin-bottom:0; }
+    .legend-dot { width:9px; height:9px; border-radius:50%; margin-top:4px; flex-shrink:0; }
+    .legend-dot.ok   { background:var(--sage); }
+    .legend-dot.low  { background:#e67e22; }
+    .legend-dot.crit { background:var(--red-soft); }
+    .legend-label { font-size:12px; font-weight:700; color:var(--charcoal); }
+    .legend-desc  { font-size:11px; color:#999; margin-top:2px; line-height:1.4; }
     .tbl-btn { padding:4px 11px; border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; border:1.5px solid; transition:all .15s; background:transparent; }
     .tbl-btn-edit { border-color:var(--gold); color:var(--gold); } .tbl-btn-edit:hover { background:var(--gold); color:#fff; }
     .tbl-btn-del  { border-color:#c9a; color:#c88; } .tbl-btn-del:hover { background:var(--red-soft); border-color:var(--red-soft); color:#fff; }
@@ -728,14 +797,14 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
     .btn-modal-cancel:hover { color:var(--red-soft); border-color:var(--red-soft); }
   </style>
 </head>
-<body data-reopen-recipe="<?= $reopenRecipeProductId ?>">
+<body data-reopen-recipe="<?= $reopenRecipeProductId ?>" data-reopen-sizes="<?= $reopenSizesProductId ?>">
 
 <header id="app-header">
   <div class="header-brand">
     <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
     <div class="brand-text"><div class="name">SmartStock</div><div class="sub">Bean There Café</div></div>
   </div>
-  <div class="header-center"><span class="portal-badge">Owner Panel</span><span class="header-view-label">Products</span></div>
+  <div class="header-center"></div>
   <div class="header-right">
     <div class="header-clock" id="clock"></div>
     <div class="header-user">
@@ -785,11 +854,19 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
       </select>
       <select class="filter-select" id="product-stock-filter" onchange="filterProducts()"><option value="">All Stock Levels</option><option value="ok">OK</option><option value="low">Low</option><option value="crit">Critical</option></select>
     </div>
-    <div class="table-wrap">
-      <table class="data-table">
-        <thead><tr><th>Image</th><th>Product Name</th><th>Category</th><th>Stock</th><th>Unit Cost</th><th>Selling Price</th><th>Supplier</th><th>Contact</th><th>Actions</th></tr></thead>
-        <tbody id="product-tbody"></tbody>
-      </table>
+    <div class="content-row">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Image</th><th>Product Name</th><th>Category</th><th>Stock</th><th>Unit Cost</th><th>Selling Price</th><th>Actions</th></tr></thead>
+          <tbody id="product-tbody"></tbody>
+        </table>
+      </div>
+      <div class="legend-card">
+        <div class="legend-card-title">Legend</div>
+        <div class="legend-item"><span class="legend-dot ok"></span><div><div class="legend-label">OK</div><div class="legend-desc">Stock at a healthy level</div></div></div>
+        <div class="legend-item"><span class="legend-dot low"></span><div><div class="legend-label">Low</div><div class="legend-desc">Running low, reorder soon</div></div></div>
+        <div class="legend-item"><span class="legend-dot crit"></span><div><div class="legend-label">Critical</div><div class="legend-desc">Reorder immediately</div></div></div>
+      </div>
     </div>
   </div>
 </div>
@@ -820,6 +897,10 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
         </select>
       </div>
       <div class="modal-field"><label>Selling Price (₱)</label><input type="number" name="price" min="0" step="0.01" placeholder="0.00" required /></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="modal-field"><label>Stock Quantity</label><input type="number" name="stock" min="0" placeholder="0" required /></div>
+        <div class="modal-field"><label>Unit Cost (₱)</label><input type="number" name="cost" min="0" step="0.01" placeholder="0.00" required /></div>
+      </div>
 
       <div id="add-madetoorder-fields" style="display:none;">
         <div class="modal-field">
@@ -830,10 +911,6 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
       </div>
 
       <div id="add-prepared-fields" style="display:none;">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-          <div class="modal-field"><label>Stock Quantity</label><input type="number" name="stock" min="0" placeholder="0" /></div>
-          <div class="modal-field"><label>Unit Cost (₱)</label><input type="number" name="cost" min="0" step="0.01" placeholder="0.00" /></div>
-        </div>
         <div class="modal-field"><label>Supplier Name</label><input type="text" name="supplier_name" placeholder="Supplier company"  /></div>
         <div class="modal-field"><label>Supplier Contact</label><input type="text" name="supplier_contact" placeholder="09XX-XXX-XXXX"  /></div>
       </div>
@@ -908,6 +985,10 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
         </select>
       </div>
       <div class="modal-field"><label>Selling Price (₱)</label><input type="number" name="price" id="edit-price" min="0" step="0.01" required /></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="modal-field"><label>Stock Quantity</label><input type="number" name="stock" id="edit-stock" min="0" required /></div>
+        <div class="modal-field"><label>Unit Cost (₱)</label><input type="number" name="cost" id="edit-cost" min="0" step="0.01" required /></div>
+      </div>
 
       <div id="edit-madetoorder-fields" style="display:none;">
         <div class="modal-field">
@@ -918,10 +999,6 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
       </div>
 
       <div id="edit-prepared-fields" style="display:none;">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-          <div class="modal-field"><label>Stock Quantity</label><input type="number" name="stock" id="edit-stock" min="0" /></div>
-          <div class="modal-field"><label>Unit Cost (₱)</label><input type="number" name="cost" id="edit-cost" min="0" step="0.01" /></div>
-        </div>
         <div class="modal-field"><label>Supplier Name</label><input type="text" name="supplier_name" id="edit-supplier-name" /></div>
         <div class="modal-field"><label>Supplier Contact</label><input type="text" name="supplier_contact" id="edit-supplier-contact" /></div>
       </div>
@@ -948,7 +1025,7 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
           <select name="ingredient_id" id="recipe-ingredient-select" onchange="updateRecipeUnitLabel()" required>
             <option value="">Select ingredient…</option>
             <?php foreach ($ingredients as $ing): ?>
-              <option value="<?= (int)$ing['product_ingredients_id'] ?>" data-unit="<?= htmlspecialchars($ing['ingredient_unit']) ?>"><?= htmlspecialchars($ing['ingredient_name']) ?></option>
+              <option value="<?= (int)$ing['product_ingredients_id'] ?>" data-unit="<?= htmlspecialchars($ing['ingredient_unit']) ?>" data-unit-label="<?= htmlspecialchars($ing['ingredient_unit_label']) ?>"><?= htmlspecialchars($ing['ingredient_name']) ?></option>
             <?php endforeach; ?>
           </select>
         </div>
@@ -959,10 +1036,14 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
           </div>
           <div class="modal-field">
             <label>Unit</label>
-            <select name="unit" required>
+            <select name="unit" id="recipe-unit-select" required>
               <option value="">Select unit…</option>
-              <?php foreach ($measurementUnits as $u): ?>
-                <option value="<?= htmlspecialchars($u) ?>"><?= htmlspecialchars($u) ?></option>
+              <?php foreach ($unitGroups as $family => $opts): ?>
+                <optgroup label="<?= htmlspecialchars(UNIT_FAMILY_LABELS[$family] ?? ucfirst($family)) ?>">
+                  <?php foreach ($opts as $opt): ?>
+                    <option value="<?= htmlspecialchars($opt['key']) ?>"><?= htmlspecialchars($opt['label']) ?></option>
+                  <?php endforeach; ?>
+                </optgroup>
               <?php endforeach; ?>
             </select>
           </div>
@@ -978,6 +1059,30 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
   </div>
 </div>
 
+<div class="modal-overlay" id="modal-sizes-item">
+  <div class="modal-box">
+    <div class="modal-title"><i class="fas fa-ruler-combined" style="color:var(--gold);margin-right:8px;"></i>Sizes / Options — <span id="sizes-product-name"></span></div>
+    <div class="modal-sub">e.g. Small / Medium / Large for pizza, or Hot / Iced for coffee. Each option has its own price — leave empty for a single-size product. When at least one exists, the cashier must pick one at checkout.</div>
+    <div id="sizes-items-list" style="margin-bottom:16px;"></div>
+    <form method="POST" action="products.php" style="border-top:1px solid var(--cream-dark);padding-top:14px;">
+      <input type="hidden" name="action" value="variant_add">
+      <input type="hidden" name="product_id" id="sizes-add-product-id" value="">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div class="modal-field">
+          <label>Size / Option Name</label>
+          <input type="text" name="variant_name" placeholder="e.g. Small, Hot" required />
+        </div>
+        <div class="modal-field">
+          <label>Price (₱)</label>
+          <input type="number" name="variant_price" min="0" step="0.01" placeholder="0.00" required />
+        </div>
+      </div>
+      <button type="submit" class="btn-modal-primary"><i class="fas fa-plus" style="margin-right:6px;"></i>Add Size / Option</button>
+    </form>
+    <button type="button" class="btn-modal-cancel" onclick="closeModal('modal-sizes-item')">Close</button>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-confirm-delete">
   <div class="modal-box" style="max-width:360px;">
     <div class="modal-title"><i class="fas fa-triangle-exclamation" style="color:var(--red-soft);margin-right:8px;"></i>Please Confirm</div>
@@ -990,15 +1095,17 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
 <div id="toast-container"></div>
 <script id="products-data" type="application/json"><?= json_encode($products, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?></script>
 <script id="ingredients-data" type="application/json"><?= json_encode($ingredients, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?></script>
-<script id="measurement-units-data" type="application/json"><?= json_encode($measurementUnits, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?></script>
+<script id="measurement-units-data" type="application/json"><?= json_encode($unitGroups, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?></script>
 
 <script>
   // Product catalog — loaded from the products table (see products-data script tag above)
   const products = JSON.parse(document.getElementById('products-data').textContent);
   // Ingredient list (for the made-to-order recipe builder) — from product_ingredients
   const allIngredients = JSON.parse(document.getElementById('ingredients-data').textContent);
-  // Display-unit choices offered on each recipe line (Tablespoon, Cup, Grams, etc.)
-  const measurementUnits = JSON.parse(document.getElementById('measurement-units-data').textContent);
+  // Unit choices offered on each recipe line, grouped by family: { mass: [...], volume: [...], count: [...] }
+  const unitGroups = JSON.parse(document.getElementById('measurement-units-data').textContent);
+  const unitFamilyLabels = { mass: 'Weight', volume: 'Volume', count: 'Count' };
+  const unitLabelByKey = Object.fromEntries(Object.values(unitGroups).flat().map(o => [o.key, o.label]));
 
   document.addEventListener('DOMContentLoaded', () => {
     updateClock(); setInterval(updateClock, 1000);
@@ -1006,6 +1113,9 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
 
     const reopenId = parseInt(document.body.dataset.reopenRecipe || '0', 10);
     if (reopenId > 0) openRecipeModal(reopenId);
+
+    const reopenSizesId = parseInt(document.body.dataset.reopenSizes || '0', 10);
+    if (reopenSizesId > 0) openSizesModal(reopenSizesId);
 
     <?php if ($msg): ?>
       showToast(<?= json_encode($msg, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>, <?= json_encode($msgType, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>);
@@ -1032,11 +1142,17 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
     const row = document.createElement('div');
     row.style.cssText = 'padding-bottom:8px;margin-bottom:8px;border-bottom:1px solid var(--cream-dark);';
     const options = allIngredients.map(ing =>
-      `<option value="${ing.product_ingredients_id}" data-unit="${ing.ingredient_unit}" ${String(ing.product_ingredients_id) === String(selectedIngredientId) ? 'selected' : ''}>${ing.ingredient_name} (${ing.ingredient_unit})</option>`
+      `<option value="${ing.product_ingredients_id}" data-unit="${ing.ingredient_unit}" ${String(ing.product_ingredients_id) === String(selectedIngredientId) ? 'selected' : ''}>${ing.ingredient_name} (${ing.ingredient_unit_label})</option>`
     ).join('');
-    const unitOptions = measurementUnits.map(u =>
-      `<option value="${u}" ${u === selectedUnit ? 'selected' : ''}>${u}</option>`
-    ).join('');
+    // Default the unit to the ingredient's own unit when nothing was passed in (new row), so the
+    // common case — recipe unit matches stock unit — needs no conversion and can't be mismatched.
+    const selectedIngredient = allIngredients.find(ing => String(ing.product_ingredients_id) === String(selectedIngredientId));
+    const effectiveSelectedUnit = selectedUnit || (selectedIngredient ? selectedIngredient.ingredient_unit : '');
+    const unitOptionGroups = Object.entries(unitGroups).map(([family, opts]) => `
+      <optgroup label="${unitFamilyLabels[family] || family}">
+        ${opts.map(o => `<option value="${o.key}" ${o.key === effectiveSelectedUnit ? 'selected' : ''}>${o.label}</option>`).join('')}
+      </optgroup>
+    `).join('');
     row.innerHTML = `
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
         <select name="ingredient_id[]" style="flex:2;padding:9px 13px;border-radius:8px;border:1.5px solid var(--cream-dark);background:var(--cream);font-family:var(--font-body);font-size:13px;color:var(--charcoal);">
@@ -1046,7 +1162,7 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
         <input type="number" name="ingredient_qty[]" min="0" step="0.01" placeholder="Qty" value="${quantity}" style="flex:1;padding:9px 13px;border-radius:8px;border:1.5px solid var(--cream-dark);background:var(--cream);font-family:var(--font-body);font-size:13px;color:var(--charcoal);" />
         <select name="ingredient_unit[]" style="flex:1;padding:9px 13px;border-radius:8px;border:1.5px solid var(--cream-dark);background:var(--cream);font-family:var(--font-body);font-size:13px;color:var(--charcoal);">
           <option value="">Unit…</option>
-          ${unitOptions}
+          ${unitOptionGroups}
         </select>
         <button type="button" class="tbl-btn tbl-btn-del" onclick="this.parentElement.parentElement.remove()">✕</button>
       </div>
@@ -1068,7 +1184,7 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
     if (!tbody) return;
 
     if (products.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#aaa;padding:24px 8px;">No products yet. Click "Add Product" to add your first item.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#aaa;padding:24px 8px;">No products yet. Click "Add Product" to add your first item.</td></tr>';
       return;
     }
 
@@ -1080,7 +1196,7 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
     });
 
     if (filtered.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#aaa;padding:24px 8px;">No products match your filters.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#aaa;padding:24px 8px;">No products match your filters.</td></tr>';
       return;
     }
 
@@ -1091,14 +1207,13 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
         <td>${p.image ? `<img src="${p.image}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:6px;">` : `<div style="width:40px;height:40px;border-radius:6px;background:var(--cream-dark);"></div>`}</td>
         <td style="font-weight:600;">${p.name}${isMotd ? ' <span class="tag tag-supply" style="margin-left:4px;">Made to Order</span>' : ''}</td>
         <td><span class="tag ${p.tag_class}">${p.category_name}</span></td>
-        <td>${isMotd ? '<span class="text-muted">—</span>' : `<div class="stock-indicator stock-${p.level}"><div class="stock-dot"></div>${p.stock}</div>`}</td>
-        <td class="text-mono">${isMotd ? '<span class="text-muted">—</span>' : money(p.cost)}</td>
+        <td><div class="stock-indicator stock-${p.level}"><div class="stock-dot"></div>${p.stock}</div></td>
+        <td class="text-mono">${money(p.cost)}</td>
         <td class="text-mono">${money(p.price)}</td>
-        <td>${isMotd ? '<span class="text-muted">—</span>' : p.supplier_name}</td>
-        <td class="text-mono" style="font-size:12px;">${isMotd ? '<span class="text-muted">—</span>' : p.supplier_contact}</td>
         <td style="display:flex;gap:6px;align-items:center;">
           <button class="tbl-btn tbl-btn-edit" onclick="openEditModal(${p.id})">Edit</button>
           ${isMotd ? `<button class="tbl-btn tbl-btn-edit" onclick="openRecipeModal(${p.id})">Recipe</button>` : ''}
+          <button class="tbl-btn tbl-btn-edit" onclick="openSizesModal(${p.id})">Sizes${p.variants.length > 0 ? ` (${p.variants.length})` : ''}</button>
           <form method="POST" action="products.php" style="display:contents;" onsubmit="return confirmDelete(event, 'Delete ${p.name.replace(/'/g, "\\'")}?')">
             <input type="hidden" name="action" value="delete">
             <input type="hidden" name="product_id" value="${p.id}">
@@ -1130,8 +1245,8 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
     typeSelect.value = p.type;
     toggleProductTypeFields(typeSelect, 'edit-prepared-fields', 'edit-madetoorder-fields');
 
-    document.getElementById('edit-stock').value = p.type === 'prepared' ? p.stock : '';
-    document.getElementById('edit-cost').value = p.type === 'prepared' ? p.cost : '';
+    document.getElementById('edit-stock').value = p.stock;
+    document.getElementById('edit-cost').value = p.cost;
     document.getElementById('edit-supplier-name').value = p.type === 'prepared' ? p.supplier_name : '';
     document.getElementById('edit-supplier-contact').value = p.type === 'prepared' ? p.supplier_contact : '';
 
@@ -1160,6 +1275,8 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
     if (select) select.value = '';
     const unitLabel = document.getElementById('recipe-unit-label');
     if (unitLabel) unitLabel.textContent = '';
+    const unitSelect = document.getElementById('recipe-unit-select');
+    if (unitSelect) unitSelect.value = '';
     renderRecipeItems(p);
     openModal('modal-recipe-item');
   }
@@ -1172,10 +1289,38 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
     }
     list.innerHTML = p.recipe.map(r => `
       <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--cream-dark);">
-        <div style="font-size:13px;"><strong>${r.ingredient_name}</strong> — ${r.quantity} ${r.unit} per unit sold${r.is_choice ? ' <span class="tag tag-supply">Flavor choice</span>' : ''}</div>
+        <div style="font-size:13px;"><strong>${r.ingredient_name}</strong> — ${r.quantity} ${unitLabelByKey[r.unit] || r.unit} per unit sold${r.is_choice ? ' <span class="tag tag-supply">Flavor choice</span>' : ''}</div>
         <form method="POST" action="products.php" onsubmit="return confirmDelete(event, 'Remove ${r.ingredient_name.replace(/'/g, "\\'")} from this recipe?')">
           <input type="hidden" name="action" value="recipe_remove">
           <input type="hidden" name="item_id" value="${r.item_id}">
+          <input type="hidden" name="product_id" value="${p.id}">
+          <button type="submit" class="tbl-btn tbl-btn-del">Remove</button>
+        </form>
+      </div>
+    `).join('');
+  }
+
+  function openSizesModal(id) {
+    const p = products.find(x => x.id === id);
+    if (!p) return;
+    document.getElementById('sizes-product-name').textContent = p.name;
+    document.getElementById('sizes-add-product-id').value = p.id;
+    renderSizeItems(p);
+    openModal('modal-sizes-item');
+  }
+
+  function renderSizeItems(p) {
+    const list = document.getElementById('sizes-items-list');
+    if (!p.variants || p.variants.length === 0) {
+      list.innerHTML = '<div style="color:#aaa;font-size:13px;padding:8px 0;">No sizes/options yet — this product sells at its base price only.</div>';
+      return;
+    }
+    list.innerHTML = p.variants.map(v => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--cream-dark);">
+        <div style="font-size:13px;"><strong>${v.name}</strong> — ${money(v.price)}</div>
+        <form method="POST" action="products.php" onsubmit="return confirmDelete(event, 'Remove the ${v.name.replace(/'/g, "\\'")} option?')">
+          <input type="hidden" name="action" value="variant_remove">
+          <input type="hidden" name="variant_id" value="${v.variant_id}">
           <input type="hidden" name="product_id" value="${p.id}">
           <button type="submit" class="tbl-btn tbl-btn-del">Remove</button>
         </form>
@@ -1188,7 +1333,11 @@ $reopenRecipeProductId = (int)($_GET['recipe'] ?? 0);
     if (!select) return;
     const opt = select.options[select.selectedIndex];
     const label = document.getElementById('recipe-unit-label');
-    if (label) label.textContent = opt && opt.dataset.unit ? '(' + opt.dataset.unit + ')' : '';
+    if (label) label.textContent = opt && opt.dataset.unitLabel ? '(' + opt.dataset.unitLabel + ')' : '';
+    // Default the Unit dropdown to the ingredient's own unit — the common case needs no
+    // conversion at checkout, so this is the safest default (still freely changeable).
+    const unitSelect = document.getElementById('recipe-unit-select');
+    if (unitSelect && opt && opt.dataset.unit) unitSelect.value = opt.dataset.unit;
   }
 
   function startEditCategory(btn) {

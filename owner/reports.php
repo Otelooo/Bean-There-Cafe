@@ -148,7 +148,7 @@ function build_sales_report(mysqli $conn, string $period, int $categoryId, strin
         }
     } else {
         $sqlTrend = "SELECT transaction_id, transaction_date, transaction_total
-                     FROM transactions
+                     FROM transactions t
                      WHERE transaction_status = 'completed' AND DATE(transaction_date) BETWEEN ? AND ?" . $timeSql;
         $stmt = $conn->prepare($sqlTrend);
         if ($allDay) {
@@ -648,6 +648,7 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
       display: flex;
       align-items: center;
       justify-content: space-between;
+      position: sticky; top: var(--header-h); z-index: 500;
     }
 
     .page-strip h1 {
@@ -1182,8 +1183,7 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
         <div class="sub">Bean There Café</div>
       </div>
     </div>
-    <div class="header-center"><span class="portal-badge">Owner Panel</span><span class="header-view-label">Sales
-        Reports</span></div>
+    <div class="header-center"></div>
     <div class="header-right">
       <div class="header-clock" id="clock"></div>
       <div class="header-user">
