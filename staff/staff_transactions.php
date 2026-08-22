@@ -2,6 +2,7 @@
 session_start();
 require_once __DIR__ . '/../db_connect.php';
 require_once __DIR__ . '/../settings_helper.php';
+require_once __DIR__ . '/../unit_helper.php';
 
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'cafe staff') {
     header('Location: ../signin.php');
@@ -22,8 +23,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         exit;
     }
 
-    // Each cart line is its own product+flavor combination, so the same product can appear
-    // more than once (e.g. two orders of Fries with different flavors chosen).
+    // Each cart line is its own product+size+flavor combination, so the same product can appear
+    // more than once (e.g. a Small and a Large of the same coffee, or two Fries with different
+    // flavors chosen).
     $cartLines = [];
     $totalQtyByProduct = [];
     foreach ($rawCart as $line) {
@@ -35,7 +37,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         }
         $flavorRaw = $line['flavor_ingredient_id'] ?? null;
         $flavorId = ($flavorRaw !== null && $flavorRaw !== '') ? (int)$flavorRaw : null;
-        $cartLines[] = ['product_id' => $pid, 'qty' => $qty, 'flavor_ingredient_id' => $flavorId];
+        $variantRaw = $line['variant_id'] ?? null;
+        $variantId = ($variantRaw !== null && $variantRaw !== '') ? (int)$variantRaw : null;
+        $cartLines[] = ['product_id' => $pid, 'qty' => $qty, 'flavor_ingredient_id' => $flavorId, 'variant_id' => $variantId];
         $totalQtyByProduct[$pid] = ($totalQtyByProduct[$pid] ?? 0) + $qty;
     }
 
@@ -60,18 +64,56 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
 
         foreach ($totalQtyByProduct as $pid => $totalQty) {
             $product = $productsById[$pid];
-            // Made-to-order products have no product_stocks of their own — availability is governed
-            // entirely by the ingredient stock check below.
-            if ($product['product_type'] !== 'made_to_order' && (int)$product['product_stocks'] < $totalQty) {
+            // Every product now carries its own stock count, made-to-order included — a sale is
+            // blocked if it would exceed either that count or the ingredients the recipe needs.
+            if ((int)$product['product_stocks'] < $totalQty) {
                 throw new RuntimeException('Not enough stock for ' . $product['product_name'] . '.');
             }
         }
+
+        // Sizes/options each carry their own price, which always wins over the product's base
+        // price for that line — re-fetched here (never trusted from the client) and checked
+        // against the product it was picked for, so a tampered request can't apply another
+        // product's price.
+        $variantIds = [];
+        foreach ($cartLines as $line) {
+            if ($line['variant_id'] !== null) {
+                $variantIds[] = $line['variant_id'];
+            }
+        }
+        $variantsById = [];
+        if ($variantIds) {
+            $variantIds = array_values(array_unique($variantIds));
+            $varPlaceholders = implode(',', array_fill(0, count($variantIds), '?'));
+            $varTypes = str_repeat('i', count($variantIds));
+            $varStmt = $conn->prepare("SELECT product_variant_id, product_id, variant_name, variant_price FROM product_variants WHERE product_variant_id IN ($varPlaceholders)");
+            $varStmt->bind_param($varTypes, ...$variantIds);
+            $varStmt->execute();
+            $varResult = $varStmt->get_result();
+            while ($row = $varResult->fetch_assoc()) {
+                $variantsById[(int)$row['product_variant_id']] = $row;
+            }
+            $varStmt->close();
+        }
+
+        // Products that have at least one size/option defined require the cashier to pick one —
+        // enforced server-side too, in case the size picker was bypassed client-side.
+        $productIdsWithVariants = [];
+        $vCheckStmt = $conn->prepare("SELECT DISTINCT product_id FROM product_variants WHERE product_id IN ($placeholders)");
+        $vCheckStmt->bind_param($types, ...$ids);
+        $vCheckStmt->execute();
+        $vCheckResult = $vCheckStmt->get_result();
+        while ($row = $vCheckResult->fetch_assoc()) {
+            $productIdsWithVariants[(int)$row['product_id']] = true;
+        }
+        $vCheckStmt->close();
 
         // Load each cart product's recipe once: required ingredients (always consumed) and
         // flavor-choice options (exactly one consumed — whichever the cashier picked).
         $recipeByProduct = [];
         $recipeStmt = $conn->prepare('
-            SELECT pii.product_id, pii.product_ingredients_id, pii.quantity, pii.is_flavor_choice, pi.ingredient_name
+            SELECT pii.product_id, pii.product_ingredients_id, pii.quantity, pii.unit, pii.is_flavor_choice,
+                   pi.ingredient_name, pi.ingredient_unit
             FROM product_ingredient_items pii
             JOIN product_ingredients pi ON pi.product_ingredients_id = pii.product_ingredients_id
             WHERE pii.product_id = ?
@@ -85,6 +127,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
                     'ingredient_id' => (int)$row['product_ingredients_id'],
                     'ingredient_name' => $row['ingredient_name'],
                     'quantity' => (float)$row['quantity'],
+                    'recipe_unit' => $row['unit'],
+                    'stock_unit' => $row['ingredient_unit'],
                     'is_choice' => (bool)$row['is_flavor_choice'],
                 ];
             }
@@ -98,21 +142,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
             $pid = $line['product_id'];
             $qty = $line['qty'];
             $product = $productsById[$pid];
+
+            $chosenVariantName = null;
             $unitPrice = (float)$product['product_selling_price'];
+            if ($line['variant_id'] !== null) {
+                $variant = $variantsById[$line['variant_id']] ?? null;
+                if (!$variant || (int)$variant['product_id'] !== $pid) {
+                    throw new RuntimeException('Invalid size/option selected for ' . $product['product_name'] . '.');
+                }
+                $unitPrice = (float)$variant['variant_price'];
+                $chosenVariantName = $variant['variant_name'];
+            } elseif (isset($productIdsWithVariants[$pid])) {
+                throw new RuntimeException('Please choose a size/option for ' . $product['product_name'] . '.');
+            }
             $subtotal = $unitPrice * $qty;
             $grossTotal += $subtotal;
 
             $chosenIngredientName = null;
             $hasChoiceGroup = false;
             foreach ($recipeByProduct[$pid] ?? [] as $r) {
+                // Recipe quantities are entered in whatever unit made sense on the product form
+                // (e.g. Milliliters), but stock is tracked in the ingredient's own unit (e.g.
+                // Liters) — convert before deducting so the two units don't get conflated.
                 if (!$r['is_choice']) {
-                    $needed = $r['quantity'] * $qty;
+                    $neededPerSale = convert_quantity($r['quantity'], $r['recipe_unit'], $r['stock_unit']);
+                    $needed = $neededPerSale * $qty;
                     $ingredientNeeds[$r['ingredient_id']] = ($ingredientNeeds[$r['ingredient_id']] ?? 0) + $needed;
                     continue;
                 }
                 $hasChoiceGroup = true;
                 if ($r['ingredient_id'] === $line['flavor_ingredient_id']) {
-                    $needed = $r['quantity'] * $qty;
+                    $neededPerSale = convert_quantity($r['quantity'], $r['recipe_unit'], $r['stock_unit']);
+                    $needed = $neededPerSale * $qty;
                     $ingredientNeeds[$r['ingredient_id']] = ($ingredientNeeds[$r['ingredient_id']] ?? 0) + $needed;
                     $chosenIngredientName = $r['ingredient_name'];
                 }
@@ -129,6 +190,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
                 'unit_price' => $unitPrice,
                 'subtotal' => $subtotal,
                 'chosen_ingredient_name' => $chosenIngredientName,
+                'chosen_variant_name' => $chosenVariantName,
             ];
         }
 
@@ -166,13 +228,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         $transactionId = $insertTxn->insert_id;
         $insertTxn->close();
 
-        // product_name_snapshot / chosen_ingredient_name_snapshot preserve what was actually sold
-        // even if the product or ingredient is deleted later.
-        $insertItem = $conn->prepare('INSERT INTO transaction_items (transaction_id, product_id, product_name_snapshot, chosen_ingredient_name_snapshot, quantity, unit_price, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?)');
-        // Only "prepared" products track their own stock; made-to-order items have no product_stocks to decrement.
-        $updateStock = $conn->prepare("UPDATE products SET product_stocks = product_stocks - ? WHERE product_id = ? AND product_type = 'prepared'");
+        // product_name_snapshot / chosen_ingredient_name_snapshot / variant_name_snapshot preserve
+        // what was actually sold even if the product, ingredient, or size/option is deleted later.
+        $insertItem = $conn->prepare('INSERT INTO transaction_items (transaction_id, product_id, product_name_snapshot, chosen_ingredient_name_snapshot, variant_name_snapshot, quantity, unit_price, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+        // Every product's own stock count is decremented on sale, made-to-order included — on top
+        // of the ingredient stock decremented below for made-to-order recipes.
+        $updateStock = $conn->prepare('UPDATE products SET product_stocks = product_stocks - ? WHERE product_id = ?');
         foreach ($lineItems as $item) {
-            $insertItem->bind_param('iissidd', $transactionId, $item['product_id'], $item['product_name'], $item['chosen_ingredient_name'], $item['quantity'], $item['unit_price'], $item['subtotal']);
+            $insertItem->bind_param('iisssidd', $transactionId, $item['product_id'], $item['product_name'], $item['chosen_ingredient_name'], $item['chosen_variant_name'], $item['quantity'], $item['unit_price'], $item['subtotal']);
             $insertItem->execute();
 
             $updateStock->bind_param('ii', $item['quantity'], $item['product_id']);
@@ -232,6 +295,19 @@ while ($row = $flavorResult->fetch_assoc()) {
     ];
 }
 
+// Sizes/options (e.g. Small/Medium/Large, Hot/Iced) — each carries its own price. When a product
+// has at least one, the cashier must pick one before it's added to the cart, and that variant's
+// price replaces the product's base price for that line.
+$variantsByProduct = [];
+$variantResult = $conn->query('SELECT product_variant_id, product_id, variant_name, variant_price FROM product_variants ORDER BY product_id, sort_order, product_variant_id');
+while ($row = $variantResult->fetch_assoc()) {
+    $variantsByProduct[(int)$row['product_id']][] = [
+        'id' => (int)$row['product_variant_id'],
+        'name' => $row['variant_name'],
+        'price' => (float)$row['variant_price'],
+    ];
+}
+
 $products = [];
 $prodResult = $conn->query('
     SELECT p.product_id, p.product_name, p.product_selling_price, p.product_stocks, p.product_category_id, pc.product_category, p.product_image, p.product_type
@@ -251,6 +327,7 @@ while ($row = $prodResult->fetch_assoc()) {
         'category_name' => $row['product_category'],
         'image' => $row['product_image'] ? '../' . $row['product_image'] : null,
         'flavor_options' => $flavorOptionsByProduct[$pid] ?? [],
+        'variants' => $variantsByProduct[$pid] ?? [],
     ];
 }
 ?>
@@ -556,6 +633,7 @@ while ($row = $prodResult->fetch_assoc()) {
       display: flex;
       align-items: center;
       justify-content: space-between;
+      position: sticky; top: var(--header-h); z-index: 500;
     }
 
     .page-strip h1 {
@@ -650,6 +728,7 @@ while ($row = $prodResult->fetch_assoc()) {
     .pos-main {
       display: grid;
       grid-template-columns: 1fr 380px;
+      align-items: start;
       min-height: calc(100vh - 76px);
       gap: 24px;
       padding: 24px;
@@ -669,6 +748,39 @@ while ($row = $prodResult->fetch_assoc()) {
       gap: 8px;
     }
 
+    .product-search-wrap {
+      position: relative;
+      margin-bottom: 16px;
+    }
+
+    .product-search-wrap i {
+      position: absolute;
+      left: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--mocha-mid);
+      font-size: 13px;
+      pointer-events: none;
+    }
+
+    .product-search-input {
+      width: 100%;
+      padding: 11px 14px 11px 38px;
+      border: 1.5px solid var(--cream-dark);
+      border-radius: var(--radius);
+      background: var(--cream-light);
+      font-family: var(--font-body);
+      font-size: 13.5px;
+      color: var(--charcoal);
+      outline: none;
+      transition: border-color .2s, box-shadow .2s;
+    }
+
+    .product-search-input:focus {
+      border-color: var(--gold);
+      box-shadow: 0 0 0 3px rgba(201, 148, 58, .12);
+    }
+
     .category-tabs {
       display: flex;
       flex-wrap: wrap;
@@ -677,10 +789,10 @@ while ($row = $prodResult->fetch_assoc()) {
     }
 
     .cat-tab {
-      padding: 10px 20px;
+      padding: 9px 18px;
       background: var(--cream);
       border: 1.5px solid var(--cream-dark);
-      border-radius: var(--radius);
+      border-radius: 99px;
       color: var(--charcoal-mid);
       font-weight: 600;
       font-size: 13px;
@@ -688,10 +800,16 @@ while ($row = $prodResult->fetch_assoc()) {
       transition: all 0.2s;
     }
 
+    .cat-tab:hover {
+      border-color: var(--gold);
+      color: var(--mocha-deep);
+    }
+
     .cat-tab.active {
       background: var(--mocha);
       color: var(--cream);
       border-color: var(--mocha);
+      box-shadow: 0 4px 14px rgba(74, 44, 42, .22);
     }
 
     .products-grid {
@@ -701,6 +819,7 @@ while ($row = $prodResult->fetch_assoc()) {
     }
 
     .product-btn {
+      position: relative;
       width: 100%;
       padding: 20px 12px;
       background: var(--cream-light);
@@ -710,6 +829,7 @@ while ($row = $prodResult->fetch_assoc()) {
       cursor: pointer;
       transition: all 0.2s;
       font-family: var(--font-body);
+      overflow: hidden;
     }
 
     .product-btn:hover,
@@ -720,8 +840,60 @@ while ($row = $prodResult->fetch_assoc()) {
       background: rgba(122, 158, 126, .08);
     }
 
+    .stock-pill {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      font-size: 9.5px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 99px;
+      letter-spacing: .3px;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .stock-pill.ok {
+      background: rgba(122, 158, 126, .16);
+      color: #4d7350;
+    }
+
+    .stock-pill.low {
+      background: rgba(201, 148, 58, .2);
+      color: #8a6320;
+    }
+
+    .stock-pill.out {
+      background: rgba(192, 57, 43, .14);
+      color: var(--red-soft);
+    }
+
+    .stock-pill.motd {
+      background: rgba(74, 44, 42, .10);
+      color: var(--mocha);
+    }
+
+    .cart-qty-badge {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      background: var(--mocha-deep);
+      color: var(--gold-light);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+      min-width: 20px;
+      height: 20px;
+      border-radius: 99px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 5px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, .25);
+    }
+
     .product-icon {
-      font-size: 28px;
+      font-size: 30px;
       color: var(--mocha);
       margin-bottom: 8px;
       height: 100px;
@@ -763,6 +935,25 @@ while ($row = $prodResult->fetch_assoc()) {
       border-radius: var(--radius-lg);
       padding: 24px;
       box-shadow: var(--shadow-sm);
+      display: flex;
+      flex-direction: column;
+    }
+
+    @media (min-width: 1025px) {
+      .cart-section {
+        position: sticky;
+        top: 150px;
+        align-self: start;
+      }
+
+      .cart-card {
+        max-height: calc(100vh - 170px);
+      }
+
+      #cart-items {
+        overflow-y: auto;
+        min-height: 0;
+      }
     }
 
     .cart-empty {
@@ -849,6 +1040,21 @@ while ($row = $prodResult->fetch_assoc()) {
       color: var(--mocha-deep);
       font-size: 15px;
       white-space: nowrap;
+    }
+
+    .item-remove-btn {
+      background: none;
+      border: none;
+      color: #c9a9a5;
+      cursor: pointer;
+      font-size: 13px;
+      padding: 4px;
+      transition: color .2s, transform .2s;
+    }
+
+    .item-remove-btn:hover {
+      color: var(--red-soft);
+      transform: scale(1.1);
     }
 
     .cart-total-row {
@@ -1196,10 +1402,7 @@ while ($row = $prodResult->fetch_assoc()) {
         <div class="sub">Bean There Café</div>
       </div>
     </div>
-    <div class="header-center">
-      <span class="portal-badge">Staff Panel</span>
-      <span class="header-view-label">Point of Sale</span>
-    </div>
+    <div class="header-center"></div>
     <div class="header-right">
       <div class="header-clock" id="clock"></div>
       <div class="header-user">
@@ -1242,6 +1445,10 @@ while ($row = $prodResult->fetch_assoc()) {
               <i class="fas fa-mug-hot" style="color: var(--gold);"></i>Menu Items
             </h1>
           </div>
+          <div class="product-search-wrap">
+            <i class="fas fa-magnifying-glass"></i>
+            <input type="text" id="product-search" class="product-search-input" placeholder="Search menu items…" autocomplete="off">
+          </div>
           <div class="category-tabs">
             <div class="cat-tab active" data-cat="all">All</div>
             <?php foreach ($categories as $cat): ?>
@@ -1257,6 +1464,7 @@ while ($row = $prodResult->fetch_assoc()) {
               <h2
                 style="font-family: var(--font-display); font-size: 18px; color: var(--mocha-deep); margin: 0; display: flex; align-items: center; gap: 8px;">
                 <i class="fas fa-receipt" style="color: var(--sage);"></i>Cart
+                <span class="cart-badge" id="cart-count" style="display:none;">0</span>
               </h2>
               <button id="clear-cart"
                 style="background: var(--red-soft); color: white; padding: 6px 12px; border-radius: 6px; font-size: 12px; border: none; cursor: pointer; font-weight: 600;">Clear</button>
@@ -1267,6 +1475,19 @@ while ($row = $prodResult->fetch_assoc()) {
           </div>
         </section>
       </main>
+      <div id="size-choice-modal" class="modal-overlay">
+        <div class="modal-box" style="max-width: 360px;">
+          <div class="modal-header">
+            <h2 class="modal-title" id="size-choice-title">Choose a serving</h2>
+            <button class="modal-close" onclick="closeSizePicker()">&times;</button>
+          </div>
+          <div id="size-choice-list" style="margin: 16px 0;"></div>
+          <div class="modal-actions">
+            <button class="btn-cancel" onclick="closeSizePicker()">Cancel</button>
+            <button class="btn-confirm" onclick="confirmSizeChoice()">Next</button>
+          </div>
+        </div>
+      </div>
       <div id="flavor-choice-modal" class="modal-overlay">
         <div class="modal-box" style="max-width: 360px;">
           <div class="modal-header">
@@ -1320,8 +1541,8 @@ while ($row = $prodResult->fetch_assoc()) {
           <div id="totals-breakdown"></div>
           <div class="discount-section">
             <h4
-              style="font-family: var(--font-display); font-size: 16px; color: var(--mocha-deep); margin-bottom: 12px;">
-              Discounts</h4>
+              style="font-family: var(--font-display); font-size: 16px; color: var(--mocha-deep); margin-bottom: 12px; display:flex; align-items:center; gap:8px;">
+              <i class="fas fa-tags" style="color:var(--gold);"></i>Discounts</h4>
             <label class="discount-option">
               <input type="checkbox" class="discount-checkbox" id="pwd-discount">
               <span>Person with Disability (20%)</span>
@@ -1333,8 +1554,8 @@ while ($row = $prodResult->fetch_assoc()) {
           </div>
           <div class="payment-options">
             <h4
-              style="font-family: var(--font-display); font-size: 16px; color: var(--mochadeep); margin-bottom: 12px;">
-              Payment Method</h4>
+              style="font-family: var(--font-display); font-size: 16px; color: var(--mocha-deep); margin-bottom: 12px; display:flex; align-items:center; gap:8px;">
+              <i class="fas fa-wallet" style="color:var(--gold);"></i>Payment Method</h4>
             <div class="payment-option active" data-payment="cash">
               <input type="radio" class="payment-radio" name="payment" value="cash" checked>
               <div><i class="fas fa-money-bill-wave" style="font-size: 20px;"></i> Cash</div>
@@ -1356,8 +1577,8 @@ while ($row = $prodResult->fetch_assoc()) {
           </div>
           <div class="cash-section">
             <h4
-              style="font-family: var(--font-display); font-size: 16px; color: var(--mocha-deep); margin-bottom: 12px;">
-              Amount Tendered</h4>
+              style="font-family: var(--font-display); font-size: 16px; color: var(--mocha-deep); margin-bottom: 12px; display:flex; align-items:center; gap:8px;">
+              <i class="fas fa-money-check-dollar" style="color:var(--gold);"></i>Amount Tendered</h4>
             <input type="number" id="amount-tendered-input" class="cash-input" min="0" step="0.01" placeholder="0.00">
             <div id="change-preview" class="change-preview"></div>
           </div>
@@ -1378,7 +1599,22 @@ while ($row = $prodResult->fetch_assoc()) {
           if (c.includes('pastr') || c.includes('bread') || c.includes('bake')) return '🥐';
           return '🍽️';
         }
+        // Plain-text "Name — Size (Flavor)" label used in the checkout summary and receipt.
+        function itemLabel(item) {
+          let label = item.name;
+          if (item.variant_name) label += ' — ' + item.variant_name;
+          if (item.flavor_name) label += ' (' + item.flavor_name + ')';
+          return label;
+        }
+        // Same label with styled spans, for the cart line-item list.
+        function cartItemNameHtml(item) {
+          let html = item.name;
+          if (item.variant_name) html += ` <span style="color:var(--gold);font-weight:600;">— ${item.variant_name}</span>`;
+          if (item.flavor_name) html += ` <span style="color:#aaa;font-weight:400;">(${item.flavor_name})</span>`;
+          return html;
+        }
         let cart = [];
+        let currentCategory = 'all';
         const TAX_RATE = <?= (float)$settings['tax_rate'] ?>;
         const DISCOUNT_RATE = <?= (float)$settings['discount_rate'] ?>;
         // DOM
@@ -1392,6 +1628,7 @@ while ($row = $prodResult->fetch_assoc()) {
         const clockEl = document.getElementById('clock');
         const amountInput = document.getElementById('amount-tendered-input');
         const changePreview = document.getElementById('change-preview');
+        const searchInput = document.getElementById('product-search');
         let amountManuallyEdited = false;
         let currentPaymentMethod = 'cash';
         document.addEventListener('DOMContentLoaded', () => {
@@ -1405,6 +1642,7 @@ while ($row = $prodResult->fetch_assoc()) {
 
           clearCartBtn.addEventListener('click', clearCart);
           checkoutBtn.addEventListener('click', showCheckoutModal);
+          searchInput.addEventListener('input', () => renderProducts(currentCategory));
 
           // Modal interactions
           document.querySelectorAll('.discount-checkbox').forEach(cb => cb.addEventListener('change', updateCheckoutTotals));
@@ -1412,27 +1650,38 @@ while ($row = $prodResult->fetch_assoc()) {
           amountInput.addEventListener('input', () => { amountManuallyEdited = true; updateChangePreview(); });
         });
         function renderProducts(category = 'all') {
-          const filtered = products.filter(p => category === 'all' || String(p.category_id) === String(category));
+          currentCategory = category;
+          const term = ((searchInput && searchInput.value) || '').trim().toLowerCase();
+          const filtered = products.filter(p => {
+            const matchesCat = category === 'all' || String(p.category_id) === String(category);
+            const matchesTerm = !term || p.name.toLowerCase().includes(term);
+            return matchesCat && matchesTerm;
+          });
 
           if (products.length === 0) {
             productsGrid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#aaa;padding:40px 20px;">No menu items yet. Add products from the Products page first.</div>';
             return;
           }
           if (filtered.length === 0) {
-            productsGrid.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:#aaa;padding:40px 20px;">No items in this category.</div>';
+            productsGrid.innerHTML = `<div style="grid-column:1/-1;text-align:center;color:#aaa;padding:40px 20px;">${term ? 'No items match your search.' : 'No items in this category.'}</div>`;
             return;
           }
 
           productsGrid.innerHTML = filtered.map(p => {
-            // Made-to-order items aren't tracked by product_stocks — availability depends on ingredient
-            // stock instead, which is checked server-side at checkout.
+            // Stock now gates every product's availability, made-to-order included — checkout
+            // additionally checks ingredient stock for made-to-order recipes server-side.
             const isMotd = p.type === 'made_to_order';
-            const outOfStock = !isMotd && p.stock <= 0;
+            const outOfStock = p.stock <= 0;
+            const lowStock = !outOfStock && p.stock <= 5;
+            const pillClass = outOfStock ? 'out' : lowStock ? 'low' : 'ok';
+            const pillText = outOfStock ? 'Out of stock' : lowStock ? `${p.stock} left` : `${p.stock} in stock`;
+            const qtyInCart = cart.filter(i => i.id === p.id).reduce((sum, i) => sum + i.qty, 0);
             return `<button class="product-btn" data-product-id="${p.id}" ${outOfStock ? 'disabled style="opacity:.5;cursor:not-allowed;"' : ''}>
+          ${qtyInCart > 0 ? `<div class="cart-qty-badge">${qtyInCart}</div>` : ''}
+          <div class="stock-pill ${pillClass}">${pillText}</div>
           <div class="product-icon">${p.image ? `<img src="${p.image}" alt="">` : iconFor(p.category_name)}</div>
-          <div class="product-name">${p.name}</div>
+          <div class="product-name">${p.name}${isMotd ? ' <span style="font-size:9px;color:#aaa;font-weight:600;">(Made to Order)</span>' : ''}</div>
           <div class="product-price">₱${p.price.toLocaleString()}</div>
-          <div style="font-size:11px;color:${outOfStock ? 'var(--red-soft)' : '#aaa'};margin-top:4px;">${isMotd ? 'Made to order' : (outOfStock ? 'Out of stock' : p.stock + ' in stock')}</div>
         </button>`;
           }).join('');
 
@@ -1446,20 +1695,56 @@ while ($row = $prodResult->fetch_assoc()) {
           renderProducts(cat);
         }
         let pendingFlavorProduct = null;
+        let pendingFlavorVariant = null;
+        let pendingSizeProduct = null;
         function addToCart(id) {
           const product = products.find(p => p.id === id);
           if (!product) return;
-          const isMotd = product.type === 'made_to_order';
-          if (!isMotd && product.stock <= 0) return;
+          if (product.stock <= 0) return;
 
-          if (product.flavor_options && product.flavor_options.length > 0) {
-            openFlavorPicker(product);
+          if (product.variants && product.variants.length > 0) {
+            openSizePicker(product);
             return;
           }
-          addToCartFinal(product, null, null);
+          proceedAfterSize(product, null);
         }
-        function openFlavorPicker(product) {
+        function proceedAfterSize(product, variant) {
+          if (product.flavor_options && product.flavor_options.length > 0) {
+            openFlavorPicker(product, variant);
+            return;
+          }
+          addToCartFinal(product, null, null, variant);
+        }
+        function openSizePicker(product) {
+          pendingSizeProduct = product;
+          document.getElementById('size-choice-title').textContent = 'Choose a serving for ' + product.name;
+          document.getElementById('size-choice-list').innerHTML = product.variants.map((v, i) => `
+      <label style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--cream-dark);cursor:pointer;font-size:14px;">
+        <span style="display:flex;align-items:center;gap:10px;">
+          <input type="radio" name="size-choice" value="${v.id}" ${i === 0 ? 'checked' : ''} />
+          <span>${v.name}</span>
+        </span>
+        <span style="font-family:var(--font-mono);color:var(--gold);font-weight:700;">₱${v.price.toLocaleString()}</span>
+      </label>
+    `).join('');
+          document.getElementById('size-choice-modal').classList.add('show');
+        }
+        function closeSizePicker() {
+          document.getElementById('size-choice-modal').classList.remove('show');
+          pendingSizeProduct = null;
+        }
+        function confirmSizeChoice() {
+          const selected = document.querySelector('input[name="size-choice"]:checked');
+          if (!selected || !pendingSizeProduct) return;
+          const variant = pendingSizeProduct.variants.find(v => String(v.id) === selected.value);
+          if (!variant) return;
+          const product = pendingSizeProduct;
+          closeSizePicker();
+          proceedAfterSize(product, variant);
+        }
+        function openFlavorPicker(product, variant = null) {
           pendingFlavorProduct = product;
+          pendingFlavorVariant = variant;
           document.getElementById('flavor-choice-title').textContent = 'Choose a flavor for ' + product.name;
           document.getElementById('flavor-choice-list').innerHTML = product.flavor_options.map((opt, i) => `
       <label style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--cream-dark);cursor:pointer;font-size:14px;">
@@ -1472,36 +1757,41 @@ while ($row = $prodResult->fetch_assoc()) {
         function closeFlavorPicker() {
           document.getElementById('flavor-choice-modal').classList.remove('show');
           pendingFlavorProduct = null;
+          pendingFlavorVariant = null;
         }
         function confirmFlavorChoice() {
           const selected = document.querySelector('input[name="flavor-choice"]:checked');
           if (!selected || !pendingFlavorProduct) return;
           const opt = pendingFlavorProduct.flavor_options.find(o => String(o.id) === selected.value);
           if (!opt) return;
-          addToCartFinal(pendingFlavorProduct, opt.id, opt.name);
+          addToCartFinal(pendingFlavorProduct, opt.id, opt.name, pendingFlavorVariant);
           closeFlavorPicker();
         }
-        function addToCartFinal(product, flavorId, flavorName) {
-          const isMotd = product.type === 'made_to_order';
-          // A product sold with different flavors needs separate cart lines so quantities and
-          // stock checks don't get mixed between flavors.
-          const cartKey = flavorId ? `${product.id}:${flavorId}` : String(product.id);
+        function addToCartFinal(product, flavorId, flavorName, variant = null) {
+          const variantId = variant ? variant.id : null;
+          const variantName = variant ? variant.name : null;
+          const effectivePrice = variant ? variant.price : product.price;
+          // A product sold with different sizes and/or flavors needs separate cart lines so
+          // quantities and stock checks don't get mixed between them — stock itself is still one
+          // shared pool per product, only the price and label differ per line.
+          const cartKey = [product.id, variantId, flavorId].filter(v => v !== null && v !== undefined).join(':');
           const item = cart.find(i => i.cartKey === cartKey);
           const currentQty = item ? item.qty : 0;
-          if (!isMotd && currentQty >= product.stock) {
+          if (currentQty >= product.stock) {
             showToast(`Only ${product.stock} unit(s) of ${product.name} available.`, 'warn');
             return;
           }
           if (item) item.qty++;
-          else cart.push({ ...product, qty: 1, cartKey, flavor_ingredient_id: flavorId, flavor_name: flavorName });
+          else cart.push({ ...product, price: effectivePrice, qty: 1, cartKey, flavor_ingredient_id: flavorId, flavor_name: flavorName, variant_id: variantId, variant_name: variantName });
           renderCart();
           updateBadge();
+          renderProducts(currentCategory);
         }
         function updateQty(cartKey, delta) {
           const item = cart.find(i => i.cartKey === cartKey);
           if (!item) return;
           const product = products.find(p => p.id === item.id);
-          if (delta > 0 && product && product.type !== 'made_to_order' && item.qty >= product.stock) {
+          if (delta > 0 && product && item.qty >= product.stock) {
             showToast(`Only ${product.stock} unit(s) of ${product.name} available.`, 'warn');
             return;
           }
@@ -1509,11 +1799,19 @@ while ($row = $prodResult->fetch_assoc()) {
           if (item.qty <= 0) cart = cart.filter(i => i.cartKey !== cartKey);
           renderCart();
           updateBadge();
+          renderProducts(currentCategory);
+        }
+        function removeItem(cartKey) {
+          cart = cart.filter(i => i.cartKey !== cartKey);
+          renderCart();
+          updateBadge();
+          renderProducts(currentCategory);
         }
         function clearCart() {
           cart = [];
           renderCart();
           updateBadge();
+          renderProducts(currentCategory);
         }
         function renderCart() {
           if (cart.length === 0) {
@@ -1529,17 +1827,18 @@ while ($row = $prodResult->fetch_assoc()) {
       <div class="cart-item">
         <div class="item-left">
           <div class="item-details">
-            <div class="item-name">${item.name}${item.flavor_name ? ` <span style="color:#aaa;font-weight:400;">(${item.flavor_name})</span>` : ''}</div>
+            <div class="item-name">${cartItemNameHtml(item)}</div>
             <div class="item-qty-price">₱${item.price.toLocaleString()} each</div>
           </div>
         </div>
-        <div style="display: flex; align-items: center; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
           <div class="qty-controls">
             <button class="qty-btn" onclick="updateQty('${item.cartKey}', -1)">−</button>
             <div class="qty-display">${item.qty}</div>
             <button class="qty-btn" onclick="updateQty('${item.cartKey}', 1)">+</button>
           </div>
           <div class="item-total">₱${total.toLocaleString()}</div>
+          <button class="item-remove-btn" onclick="removeItem('${item.cartKey}')" title="Remove item"><i class="fas fa-trash-can"></i></button>
         </div>
       </div>
     `;
@@ -1570,6 +1869,7 @@ while ($row = $prodResult->fetch_assoc()) {
           if (!cartBadge) return;
           const count = cart.reduce((sum, i) => sum + i.qty, 0);
           cartBadge.textContent = count;
+          cartBadge.style.display = count > 0 ? 'inline-block' : 'none';
         }
         function showCheckoutModal() {
           if (cart.length === 0) return;
@@ -1613,7 +1913,7 @@ while ($row = $prodResult->fetch_assoc()) {
           document.getElementById('order-items').innerHTML = cart.map(item => {
             const total = item.price * item.qty;
             return `<div class="order-item">
-          <span>${item.name}${item.flavor_name ? ' (' + item.flavor_name + ')' : ''} × ${item.qty}</span>
+          <span>${itemLabel(item)} × ${item.qty}</span>
           <span>₱${total.toLocaleString()}</span>
         </div>`;
           }).join('');
@@ -1699,7 +1999,7 @@ while ($row = $prodResult->fetch_assoc()) {
               headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
               body: new URLSearchParams({
                 action: 'checkout',
-                cart: JSON.stringify(cart.map(i => ({ id: i.id, qty: i.qty, flavor_ingredient_id: i.flavor_ingredient_id || null }))),
+                cart: JSON.stringify(cart.map(i => ({ id: i.id, qty: i.qty, flavor_ingredient_id: i.flavor_ingredient_id || null, variant_id: i.variant_id || null }))),
                 payment_method: paymentMethod,
                 discount: hasDiscount ? '1' : ''
               })
@@ -1725,7 +2025,7 @@ while ($row = $prodResult->fetch_assoc()) {
 
           const itemsHtml = cart.map(i => `
     <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-      <span>${i.name}${i.flavor_name ? ' (' + i.flavor_name + ')' : ''} x${i.qty}</span>
+      <span>${itemLabel(i)} x${i.qty}</span>
       <span>₱${(i.price * i.qty).toLocaleString()}</span>
     </div>
   `).join('');
