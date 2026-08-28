@@ -13,8 +13,8 @@ $initials = strtoupper(substr($displayName, 0, 2));
 $staffUserId = (int)($_SESSION['user_id'] ?? 0);
 
 $settings = get_system_settings($conn);
-$criticalStockThreshold = (int)$settings['critical_stock_threshold'];
-$lowStockThreshold = (int)$settings['low_stock_threshold'];
+$criticalStockThreshold = (float)$settings['critical_stock_threshold'];
+$lowStockThreshold = (float)$settings['low_stock_threshold'];
 
 // All transaction-based figures below are scoped to this staff member's own sales only —
 // each staff account should only see revenue/transactions/best-seller it personally generated.
@@ -24,32 +24,17 @@ $stmt->execute();
 $todayRevenue = (float)$stmt->get_result()->fetch_assoc()['total'];
 $stmt->close();
 
-$stmt = $conn->prepare("SELECT COALESCE(SUM(transaction_total),0) AS total FROM transactions WHERE transaction_status = 'completed' AND DATE(transaction_date) = CURDATE() - INTERVAL 1 DAY AND user_id = ?");
-$stmt->bind_param('i', $staffUserId);
-$stmt->execute();
-$yesterdayRevenue = (float)$stmt->get_result()->fetch_assoc()['total'];
-$stmt->close();
-
-$revenueChangePct = $yesterdayRevenue > 0 ? (($todayRevenue - $yesterdayRevenue) / $yesterdayRevenue) * 100 : null;
-
 $stmt = $conn->prepare("SELECT COUNT(*) AS cnt FROM transactions WHERE DATE(transaction_date) = CURDATE() AND user_id = ?");
 $stmt->bind_param('i', $staffUserId);
 $stmt->execute();
 $todayTxnCount = (int)$stmt->get_result()->fetch_assoc()['cnt'];
 $stmt->close();
 
-$stmt = $conn->prepare("SELECT COUNT(*) AS cnt FROM transactions WHERE DATE(transaction_date) = CURDATE() - INTERVAL 1 DAY AND user_id = ?");
-$stmt->bind_param('i', $staffUserId);
-$stmt->execute();
-$yesterdayTxnCount = (int)$stmt->get_result()->fetch_assoc()['cnt'];
-$stmt->close();
-
-$txnCountChange = $todayTxnCount - $yesterdayTxnCount;
 $avgTxnValue = $todayTxnCount > 0 ? $todayRevenue / $todayTxnCount : 0;
 
 // Critical stock is store-wide inventory, not tied to any one staff member
-$stmt = $conn->prepare('SELECT COUNT(*) AS cnt FROM products WHERE product_stocks <= ?');
-$stmt->bind_param('i', $criticalStockThreshold);
+$stmt = $conn->prepare("SELECT COUNT(*) AS cnt FROM products WHERE product_type = 'prepared' AND product_stocks_reference > 0 AND (product_stocks / product_stocks_reference) * 100 <= ?");
+$stmt->bind_param('d', $criticalStockThreshold);
 $stmt->execute();
 $criticalStockCount = (int)$stmt->get_result()->fetch_assoc()['cnt'];
 $stmt->close();
@@ -91,22 +76,42 @@ while ($row = $result->fetch_assoc()) {
 }
 $stmt->close();
 
-$stockAlerts = [];
-$stmt = $conn->prepare('
-    SELECT p.product_name, p.product_stocks, s.supplier_name, s.supplier_contact
-    FROM products p
-    LEFT JOIN product_supplier s ON s.product_supplier_id = p.product_supplier_id
-    WHERE p.product_stocks <= ?
-    ORDER BY p.product_stocks ASC
-    LIMIT 5
-');
-$stmt->bind_param('i', $lowStockThreshold);
+// Same critical/low % classification the Inventory page uses for its own ingredient list.
+function ingredient_stock_level(float $stock, ?float $reference, float $criticalPct, float $lowPct): string
+{
+    if ($reference === null || $reference <= 0) {
+        return $stock <= 0 ? 'crit' : 'ok';
+    }
+    $pct = ($stock / $reference) * 100;
+    if ($pct <= $criticalPct) return 'crit';
+    if ($pct <= $lowPct) return 'low';
+    return 'ok';
+}
+
+$ingredientAlerts = [];
+$criticalIngredientCount = 0;
+$lowIngredientCount = 0;
+$stmt = $conn->prepare("SELECT ingredient_name, ingredient_stock, ingredient_stock_reference FROM product_ingredients");
 $stmt->execute();
 $result = $stmt->get_result();
 while ($row = $result->fetch_assoc()) {
-    $stockAlerts[] = $row;
+    $stock = (float)$row['ingredient_stock'];
+    $reference = $row['ingredient_stock_reference'] !== null ? (float)$row['ingredient_stock_reference'] : null;
+    $level = ingredient_stock_level($stock, $reference, $criticalStockThreshold, $lowStockThreshold);
+    if ($level === 'ok') {
+        continue;
+    }
+    $pct = ($reference !== null && $reference > 0) ? ($stock / $reference) * 100 : 0.0;
+    if ($level === 'crit') {
+        $criticalIngredientCount++;
+    } else {
+        $lowIngredientCount++;
+    }
+    $ingredientAlerts[] = ['name' => $row['ingredient_name'], 'level' => $level, 'pct' => $pct];
 }
 $stmt->close();
+usort($ingredientAlerts, fn($a, $b) => $a['pct'] <=> $b['pct']);
+$ingredientAlertCount = $criticalIngredientCount + $lowIngredientCount;
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -462,8 +467,8 @@ $stmt->close();
     /* ── KPI CARDS ── */
     .kpi-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-      gap: 15px;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 12px;
       margin-bottom: 24px;
     }
 
@@ -471,7 +476,7 @@ $stmt->close();
       background: var(--cream);
       border: 1.5px solid var(--cream-dark);
       border-radius: var(--radius-lg);
-      padding: 20px 20px 18px;
+      padding: 14px 16px 12px;
       box-shadow: var(--shadow-sm);
       position: relative;
       overflow: hidden;
@@ -495,45 +500,45 @@ $stmt->close();
     }
 
     .kpi-icon {
-      width: 38px;
-      height: 38px;
+      width: 30px;
+      height: 30px;
       border-radius: 9px;
       background: var(--accent-bg, rgba(201, 148, 58, .1));
       color: var(--accent, var(--gold));
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 16px;
-      margin-bottom: 13px;
+      font-size: 13px;
+      margin-bottom: 8px;
     }
 
     .kpi-label {
-      font-size: 10.5px;
+      font-size: 9.5px;
       color: #888;
       font-weight: 700;
       letter-spacing: .8px;
       text-transform: uppercase;
-      margin-bottom: 5px;
+      margin-bottom: 3px;
     }
 
     .kpi-value {
       font-family: var(--font-display);
-      font-size: 28px;
+      font-size: 22px;
       font-weight: 700;
       color: var(--mocha-deep);
       line-height: 1;
     }
 
     .kpi-sub {
-      font-size: 11px;
+      font-size: 10.5px;
       color: #aaa;
-      margin-top: 4px;
+      margin-top: 3px;
     }
 
     .kpi-trend {
-      font-size: 11px;
+      font-size: 10.5px;
       font-weight: 600;
-      margin-top: 4px;
+      margin-top: 3px;
     }
 
     .kpi-trend.up {
@@ -1189,12 +1194,17 @@ $stmt->close();
     <div class="sidebar-section-label">Staff Panel</div>
     <a href="staffdashboard.php" class="nav-item active"><i class="fas fa-chart-line"></i> Dashboard</a>
     <a href="staff_transactions.php" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
+    <a href="staff_transaction_history.php" class="nav-item"><i class="fas fa-clock-rotate-left"></i> Transaction History</a>
     <a href="staff_products.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Products
       <?php if ($criticalStockCount > 0): ?>
         <span class="nav-badge"><?= $criticalStockCount ?></span>
       <?php endif; ?>
     </a>
-    <a href="staff_inventory.php" class="nav-item"><i class="fas fa-warehouse"></i> Inventory</a>
+    <a href="staff_inventory.php" class="nav-item"><i class="fas fa-warehouse"></i> Inventory
+      <?php if ($ingredientAlertCount > 0): ?>
+        <span class="nav-badge"><?= $ingredientAlertCount ?></span>
+      <?php endif; ?>
+    </a>
     <a href="staff_reports.php" class="nav-item"><i class="fas fa-chart-bar"></i> Sales Report</a>
   
     
@@ -1223,31 +1233,19 @@ $stmt->close();
           <div class="kpi-label">Daily Revenue</div>
           <div class="kpi-value">₱<?= number_format($todayRevenue, 2) ?></div>
           <div class="kpi-sub">From <?= $todayTxnCount ?> completed transaction<?= $todayTxnCount === 1 ? '' : 's' ?> today</div>
-          <?php if ($revenueChangePct === null): ?>
-            <div class="kpi-trend"><i class="fas fa-minus"></i> No sales recorded yesterday</div>
-          <?php else: ?>
-            <div class="kpi-trend <?= $revenueChangePct >= 0 ? 'up' : 'warn' ?>">
-              <i class="fas <?= $revenueChangePct >= 0 ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down' ?>"></i>
-              <?= ($revenueChangePct >= 0 ? '+' : '') . number_format($revenueChangePct, 1) ?>% vs yesterday
-            </div>
-          <?php endif; ?>
         </div>
         <div class="kpi-card" style="--accent:var(--sage);--accent-bg:rgba(122,158,126,.10);">
           <div class="kpi-icon"><i class="fas fa-receipt"></i></div>
           <div class="kpi-label">Total Transactions</div>
           <div class="kpi-value"><?= $todayTxnCount ?></div>
           <div class="kpi-sub">Avg. ₱<?= number_format($avgTxnValue, 2) ?> per transaction</div>
-          <div class="kpi-trend <?= $txnCountChange >= 0 ? 'up' : 'warn' ?>">
-            <i class="fas <?= $txnCountChange >= 0 ? 'fa-arrow-trend-up' : 'fa-arrow-trend-down' ?>"></i>
-            <?= ($txnCountChange >= 0 ? '+' : '') . $txnCountChange ?> vs yesterday
-          </div>
         </div>
         <div class="kpi-card" style="--accent:#e67e22;--accent-bg:rgba(230,126,34,.10);">
           <div class="kpi-icon"><i class="fas fa-triangle-exclamation"></i></div>
           <div class="kpi-label">Critical Stock</div>
-          <div class="kpi-value"><?= $criticalStockCount ?></div>
-          <div class="kpi-sub">Products at or below <?= $criticalStockThreshold ?> units</div>
-          <?php if ($criticalStockCount > 0): ?>
+          <div class="kpi-value"><?= $ingredientAlertCount ?></div>
+          <div class="kpi-sub"><?= $criticalIngredientCount ?> critical, <?= $lowIngredientCount ?> low</div>
+          <?php if ($ingredientAlertCount > 0): ?>
             <div class="kpi-trend warn"><i class="fas fa-circle-exclamation"></i> Action required</div>
           <?php else: ?>
             <div class="kpi-trend up"><i class="fas fa-circle-check"></i> Stock levels healthy</div>
@@ -1259,7 +1257,6 @@ $stmt->close();
           <?php if ($bestSeller): ?>
             <div class="kpi-value" style="font-size:18px;line-height:1.2;margin-top:3px;"><?= htmlspecialchars($bestSeller['product_name']) ?></div>
             <div class="kpi-sub"><?= (int)$bestSeller['units'] ?> unit<?= (int)$bestSeller['units'] === 1 ? '' : 's' ?> sold today</div>
-            <div class="kpi-trend up"><i class="fas fa-crown"></i> Top seller today</div>
           <?php else: ?>
             <div class="kpi-value" style="font-size:18px;line-height:1.2;margin-top:3px;">—</div>
             <div class="kpi-sub">No sales recorded yet today</div>
@@ -1309,28 +1306,20 @@ $stmt->close();
         <div class="dash-card">
           <div class="dash-card-title"><i class="fas fa-boxes-stacked"></i>Stock Alerts</div>
           <div style="display:flex;flex-direction:column;gap:10px;">
-            <?php if (empty($stockAlerts)): ?>
+            <?php if (empty($ingredientAlerts)): ?>
               <div style="padding:14px 12px;text-align:center;color:#aaa;font-size:13px;">All stock levels are healthy.</div>
             <?php else: ?>
-              <?php foreach ($stockAlerts as $item): ?>
+              <?php foreach (array_slice($ingredientAlerts, 0, 6) as $item): ?>
                 <?php
-                  $isCritical = (int)$item['product_stocks'] <= $criticalStockThreshold;
+                  $isCritical = $item['level'] === 'crit';
                   $barColor = $isCritical ? 'var(--red-soft)' : '#e67e22';
                   $barBg = $isCritical ? 'rgba(192,57,43,.05)' : 'rgba(230,126,34,.05)';
-                  $supplierLine = $item['supplier_name']
-                    ? htmlspecialchars($item['supplier_name']) . ($item['supplier_contact'] ? ' · ' . htmlspecialchars($item['supplier_contact']) : '')
-                    : 'No supplier on file';
+                  $badgeBg = $isCritical ? 'rgba(192,57,43,.14)' : 'rgba(230,126,34,.14)';
                 ?>
                 <div
                   style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:<?= $barBg ?>;border-radius:8px;border-left:3px solid <?= $barColor ?>;">
-                  <div>
-                    <div style="font-size:13px;font-weight:600;"><?= htmlspecialchars($item['product_name']) ?></div>
-                    <div style="font-size:11px;color:#aaa;"><?= $supplierLine ?></div>
-                  </div>
-                  <div style="text-align:right;">
-                    <div style="font-size:18px;font-weight:700;color:<?= $barColor ?>;"><?= (int)$item['product_stocks'] ?></div>
-                    <div style="font-size:10px;color:#aaa;">units left</div>
-                  </div>
+                  <div style="font-size:13px;font-weight:600;"><?= htmlspecialchars($item['name']) ?></div>
+                  <span style="font-size:10px;font-weight:700;padding:3px 9px;border-radius:99px;background:<?= $badgeBg ?>;color:<?= $barColor ?>;"><?= $isCritical ? 'Critical' : 'Low' ?></span>
                 </div>
               <?php endforeach; ?>
             <?php endif; ?>

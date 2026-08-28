@@ -13,6 +13,11 @@
 -- user account detach from old transactions instead of blocking deletion.
 ALTER TABLE transactions ADD COLUMN cashier_username VARCHAR(50) NULL AFTER user_id;
 
+-- Lets the cashier attach a free-text note to a sale at checkout (e.g. an allergy
+-- warning, a special request, a reminder for a follow-up) — optional, shown on the
+-- receipt when present and reviewable later from the Transaction History detail view.
+ALTER TABLE transactions ADD COLUMN notes TEXT NULL AFTER discount;
+
 UPDATE transactions t JOIN users u ON u.user_id = t.user_id
 SET t.cashier_username = u.username
 WHERE t.cashier_username IS NULL;
@@ -53,3 +58,16 @@ ALTER TABLE product_ingredient_items ADD COLUMN is_flavor_choice TINYINT(1) NOT 
 -- an ingredient in Inventory) instead of per prepared product.
 ALTER TABLE product_ingredients ADD COLUMN ingredient_supplier VARCHAR(100) NULL AFTER ingredient_unit;
 ALTER TABLE product_ingredients ADD COLUMN ingredient_contact VARCHAR(100) NULL AFTER ingredient_supplier;
+
+
+-- Dumping structure changes for table bean_there_cafe.products and bean_there_cafe.product_ingredients
+-- Critical/Low Stock Threshold settings are now percentages instead of raw unit counts. A
+-- percentage needs a "100%" reference point, so these columns record the stock amount that was
+-- last typed into the Add/Edit form — that becomes the new 100% mark every time an item is
+-- manually set/restocked. The backfill sets every existing row's reference to its current
+-- stock, so nothing reads as under-threshold immediately after this migration.
+ALTER TABLE products ADD COLUMN product_stocks_reference INT NULL AFTER product_stocks;
+UPDATE products SET product_stocks_reference = product_stocks WHERE product_stocks_reference IS NULL;
+
+ALTER TABLE product_ingredients ADD COLUMN ingredient_stock_reference DECIMAL(10,2) NULL AFTER ingredient_stock;
+UPDATE product_ingredients SET ingredient_stock_reference = ingredient_stock WHERE ingredient_stock_reference IS NULL;

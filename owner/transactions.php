@@ -11,6 +11,14 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'cafe owner') {
 
 $settings = get_system_settings($conn);
 
+// Feeds the "Inventory" nav-badge — ingredients at critical or low stock.
+$navLowStockThreshold = (float)$settings['low_stock_threshold'];
+$navStmt = $conn->prepare("SELECT COUNT(*) AS cnt FROM product_ingredients WHERE (ingredient_stock_reference IS NULL AND ingredient_stock <= 0) OR (ingredient_stock_reference > 0 AND (ingredient_stock / ingredient_stock_reference) * 100 <= ?)");
+$navStmt->bind_param('d', $navLowStockThreshold);
+$navStmt->execute();
+$ingredientAlertCount = (int)$navStmt->get_result()->fetch_assoc()['cnt'];
+$navStmt->close();
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'checkout') {
     header('Content-Type: application/json');
 
@@ -64,9 +72,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
 
         foreach ($totalQtyByProduct as $pid => $totalQty) {
             $product = $productsById[$pid];
-            // Every product now carries its own stock count, made-to-order included — a sale is
-            // blocked if it would exceed either that count or the ingredients the recipe needs.
-            if ((int)$product['product_stocks'] < $totalQty) {
+            // Made-to-order products have no product_stocks of their own — availability is governed
+            // by ingredient stock only.
+            if ($product['product_type'] !== 'made_to_order' && (int)$product['product_stocks'] < $totalQty) {
                 throw new RuntimeException('Not enough stock for ' . $product['product_name'] . '.');
             }
         }
@@ -222,8 +230,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
 
         $userId = (int)$_SESSION['user_id'];
         $cashierUsername = $_SESSION['username'] ?? '';
-        $insertTxn = $conn->prepare("INSERT INTO transactions (user_id, cashier_username, transaction_date, transaction_total, transaction_status, payment_method, discount) VALUES (?, ?, NOW(), ?, 'completed', ?, ?)");
-        $insertTxn->bind_param('isdsd', $userId, $cashierUsername, $finalTotal, $paymentMethod, $discountAmount);
+        $notes = trim($_POST['notes'] ?? '');
+        $notes = $notes !== '' ? $notes : null;
+        $insertTxn = $conn->prepare("INSERT INTO transactions (user_id, cashier_username, transaction_date, transaction_total, transaction_status, payment_method, discount, notes) VALUES (?, ?, NOW(), ?, 'completed', ?, ?, ?)");
+        $insertTxn->bind_param('isdsds', $userId, $cashierUsername, $finalTotal, $paymentMethod, $discountAmount, $notes);
         $insertTxn->execute();
         $transactionId = $insertTxn->insert_id;
         $insertTxn->close();
@@ -231,9 +241,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         // product_name_snapshot / chosen_ingredient_name_snapshot / variant_name_snapshot preserve
         // what was actually sold even if the product, ingredient, or size/option is deleted later.
         $insertItem = $conn->prepare('INSERT INTO transaction_items (transaction_id, product_id, product_name_snapshot, chosen_ingredient_name_snapshot, variant_name_snapshot, quantity, unit_price, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-        // Every product's own stock count is decremented on sale, made-to-order included — on top
-        // of the ingredient stock decremented below for made-to-order recipes.
-        $updateStock = $conn->prepare('UPDATE products SET product_stocks = product_stocks - ? WHERE product_id = ?');
+        // Only "prepared" products track their own stock; made-to-order items have no product_stocks
+        // to decrement (their ingredient stock is decremented below instead).
+        $updateStock = $conn->prepare("UPDATE products SET product_stocks = product_stocks - ? WHERE product_id = ? AND product_type = 'prepared'");
         foreach ($lineItems as $item) {
             $insertItem->bind_param('iisssidd', $transactionId, $item['product_id'], $item['product_name'], $item['chosen_ingredient_name'], $item['chosen_variant_name'], $item['quantity'], $item['unit_price'], $item['subtotal']);
             $insertItem->execute();
@@ -585,6 +595,16 @@ while ($row = $prodResult->fetch_assoc()) {
       font-size: 14px;
     }
 
+    .nav-badge {
+      margin-left: auto;
+      background: var(--red-soft);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 1px 7px;
+      border-radius: 99px;
+    }
+
     .nav-item:hover {
       background: rgba(255, 255, 255, .06);
       color: var(--cream);
@@ -726,30 +746,41 @@ while ($row = $prodResult->fetch_assoc()) {
 
     /* ── MAIN ── */
     .pos-main {
-      display: grid;
-      grid-template-columns: 1fr 380px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
       min-height: calc(100vh - 76px);
       padding: 24px;
       padding-bottom: 110px;
     }
 
     /* ── PRODUCTS ── */
-    .section-header {
-      margin-bottom: 20px;
+    .menu-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      margin-bottom: 16px;
     }
 
-    .section-title {
+    .menu-toolbar-title {
       font-family: var(--font-display);
-      font-size: 20px;
+      font-size: 19px;
       color: var(--mocha-deep);
       display: flex;
       align-items: center;
       gap: 8px;
+      margin: 0;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .menu-toolbar .product-search-wrap {
+      flex: 1;
+      margin-bottom: 0;
     }
 
     .product-search-wrap {
       position: relative;
-      margin-bottom: 16px;
     }
 
     .product-search-wrap i {
@@ -867,11 +898,6 @@ while ($row = $prodResult->fetch_assoc()) {
       color: var(--red-soft);
     }
 
-    .stock-pill.motd {
-      background: rgba(74, 44, 42, .10);
-      color: var(--mocha);
-    }
-
     .cart-qty-badge {
       position: absolute;
       top: 8px;
@@ -923,62 +949,226 @@ while ($row = $prodResult->fetch_assoc()) {
     }
 
     /* ── CART ── */
-    .mini-cart {
+    .cart-fab {
       position: fixed;
-      left: calc(var(--sidebar-w) + 24px);
-      bottom: 24px;
-      z-index: 500;
+      right: 28px;
+      bottom: 28px;
+      z-index: 700;
       display: flex;
       align-items: center;
-      gap: 16px;
+      gap: 10px;
+      background: var(--mocha);
+      color: var(--cream);
+      border: none;
+      border-radius: 99px;
+      padding: 8px 20px 8px 8px;
+      cursor: pointer;
+      box-shadow: var(--shadow-lg);
+      transition: all .2s;
+      font-family: var(--font-body);
+    }
+
+    .cart-fab:hover {
+      background: var(--mocha-mid);
+      transform: translateY(-2px);
+    }
+
+    .cart-fab-icon {
+      position: relative;
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, .12);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+
+    .cart-fab-badge {
+      position: absolute;
+      top: -6px;
+      right: -6px;
+      background: var(--gold);
+      color: var(--mocha-deep);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 800;
+      min-width: 20px;
+      height: 20px;
+      border-radius: 99px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 4px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, .3);
+    }
+
+    .cart-fab-total {
+      font-family: var(--font-mono);
+      font-size: 16px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .cart-panel {
+      position: fixed;
+      right: 28px;
+      bottom: 96px;
+      z-index: 700;
+      width: 360px;
+      max-width: calc(100vw - 56px);
+      max-height: 65vh;
+      display: flex;
+      flex-direction: column;
       background: var(--cream);
       border: 1.5px solid var(--cream-dark);
       border-radius: var(--radius-lg);
-      padding: 24px;
-      box-shadow: var(--shadow-sm);
+      box-shadow: var(--shadow-lg);
+      overflow: hidden;
+      opacity: 0;
+      transform: translateY(12px) scale(.97);
+      pointer-events: none;
+      transition: opacity .18s ease, transform .18s ease;
     }
 
-    .mini-cart-clear {
-      width: 40px;
-      height: 40px;
+    .cart-panel.show {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+      pointer-events: auto;
+    }
+
+    .cart-panel-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 18px 12px;
+      border-bottom: 1px solid var(--cream-dark);
       flex-shrink: 0;
-      border-radius: var(--radius);
-      border: 1.5px solid var(--cream-dark);
+    }
+
+    .cart-panel-header h2 {
+      font-family: var(--font-display);
+      font-size: 17px;
+      color: var(--mocha-deep);
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .cart-panel-clear {
+      background: var(--red-soft);
+      color: #fff;
+      padding: 5px 11px;
+      border-radius: 6px;
+      font-size: 11.5px;
+      border: none;
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    .cart-panel-close {
       background: transparent;
+      border: none;
+      font-size: 20px;
+      line-height: 1;
+      color: #aaa;
+      cursor: pointer;
+      padding: 0 2px;
+    }
+
+    .cart-panel-close:hover {
       color: var(--red-soft);
-      font-size: 15px;
+    }
+
+    .cart-panel-body {
+      padding: 14px 18px;
+      overflow-y: auto;
+      flex: 1;
+    }
+
+    .cart-panel-footer {
+      padding: 12px 18px 18px;
+      border-top: 1px solid var(--cream-dark);
+      flex-shrink: 0;
+    }
+
+    .cart-empty {
+      text-align: center;
+      color: #aaa;
+      padding: 30px 20px;
+      font-size: 13px;
+    }
+
+    .cart-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--cream-dark);
+    }
+
+    .cart-item:last-child {
+      border-bottom: none;
+    }
+
+    .item-name {
+      font-weight: 600;
+      font-size: 13.5px;
+      color: var(--charcoal);
+    }
+
+    .item-qty-price {
+      font-size: 12px;
+      color: #999;
+      margin-top: 2px;
+    }
+
+    .qty-controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .qty-btn {
+      width: 26px;
+      height: 26px;
+      border-radius: 6px;
+      border: 1.5px solid var(--cream-dark);
+      background: var(--cream-light);
+      color: var(--mocha);
+      font-size: 14px;
+      font-weight: 700;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: all .2s;
+      transition: all .15s;
     }
 
-    .mini-cart-clear:hover {
-      background: var(--red-soft);
-      border-color: var(--red-soft);
-      color: #fff;
+    .qty-btn:hover {
+      border-color: var(--gold);
+      color: var(--gold);
     }
 
-    .mini-cart-total {
-      display: flex;
-      flex-direction: column;
-      line-height: 1.25;
-    }
-
-    .mini-cart-total-label {
-      font-size: 10px;
-      font-weight: 700;
-      letter-spacing: .8px;
-      text-transform: uppercase;
-      color: #888;
-    }
-
-    .mini-cart-total-value {
+    .qty-display {
+      min-width: 20px;
+      text-align: center;
       font-family: var(--font-mono);
-      font-size: 20px;
-      font-weight: 800;
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    .item-total {
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 14px;
       color: var(--mocha-deep);
+      min-width: 74px;
+      text-align: right;
     }
 
     .item-remove-btn {
@@ -1205,28 +1395,6 @@ while ($row = $prodResult->fetch_assoc()) {
       cursor: not-allowed;
     }
 
-    .ewallet-qr-section {
-      margin: 20px 0;
-      text-align: center;
-      padding: 16px;
-      background: var(--cream-light);
-      border: 1.5px solid var(--cream-dark);
-      border-radius: var(--radius);
-    }
-
-    .ewallet-qr-section img {
-      max-width: 200px;
-      width: 100%;
-      border-radius: 8px;
-      border: 1.5px solid var(--cream-dark);
-    }
-
-    .ewallet-qr-empty {
-      font-size: 12px;
-      color: #999;
-      padding: 20px 10px;
-    }
-
     .change-preview {
       margin-top: 8px;
       font-size: 13px;
@@ -1354,17 +1522,22 @@ while ($row = $prodResult->fetch_assoc()) {
   <nav id="sidebar">
     <div class="sidebar-section-label">Owner Panel</div>
     <a href="dashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
-    <a href="transactions.php" class="nav-item active"><i class="fas fa-cash-register"></i> Transaction</a>
+    <a href="transactions.php" class="nav-item active"><i class="fas fa-receipt"></i> Transactions</a>
+    <a href="transaction_history.php" class="nav-item"><i class="fas fa-clock-rotate-left"></i> Transaction History</a>
     <a href="products.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Products</a>
-    <a href="inventory.php" class="nav-item"><i class="fas fa-warehouse"></i> Inventory</a>
+    <a href="inventory.php" class="nav-item"><i class="fas fa-warehouse"></i> Inventory
+      <?php if ($ingredientAlertCount > 0): ?>
+        <span class="nav-badge"><?= $ingredientAlertCount ?></span>
+      <?php endif; ?>
+    </a>
     <a href="reports.php" class="nav-item"><i class="fas fa-chart-bar"></i>Sales Report</a>
     <a href="users.php" class="nav-item"><i class="fas fa-users-gear"></i> User Management</a>
     <hr class="sidebar-divider" />
     <div class="sidebar-section-label">Settings</div>
     <a href="settings.php" class="nav-item"><i class="fas fa-gear"></i> System
       Settings</a>
-    <div class="nav-item" onclick="showToast('Backup started!','success')"><i class="fas fa-database"></i> Data Backup
-    </div>
+    <a href="backup.php" class="nav-item"><i class="fas fa-database"></i> Data Backup
+    </a>
     <div class="sidebar-footer">
       <p>SmartStock v1.0<br />Bean There Café</p>
     </div>
@@ -1377,21 +1550,16 @@ while ($row = $prodResult->fetch_assoc()) {
         </h1>
         <div class="sub" id="pos-date">Live Sales System</div>
       </div>
-      <button class="btn-primary" onclick="clearCart()">
-        <i class="fas fa-arrows-rotate"></i> New Sale
-      </button>
     </div>
     <div style="padding:22px 26px;">
       <main class="pos-main">
         <section>
-          <div class="section-header">
-            <h1 class="section-title">
-              <i class="fas fa-mug-hot" style="color: var(--gold);"></i>Menu Items
-            </h1>
-          </div>
-          <div class="product-search-wrap">
-            <i class="fas fa-magnifying-glass"></i>
-            <input type="text" id="product-search" class="product-search-input" placeholder="Search menu items…" autocomplete="off">
+          <div class="menu-toolbar">
+            <h2 class="menu-toolbar-title"><i class="fas fa-mug-hot" style="color: var(--gold);"></i>Menu Items</h2>
+            <div class="product-search-wrap">
+              <i class="fas fa-magnifying-glass"></i>
+              <input type="text" id="product-search" class="product-search-input" placeholder="Search menu items…" autocomplete="off">
+            </div>
           </div>
           <div class="category-tabs">
             <div class="cat-tab active" data-cat="all">All</div>
@@ -1402,22 +1570,45 @@ while ($row = $prodResult->fetch_assoc()) {
           <div class="products-grid" id="products-grid"></div>
           <script id="products-data" type="application/json"><?= json_encode($products, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?></script>
         </section>
-        <section class="cart-section">
-          <div class="cart-card">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-              <h2
-                style="font-family: var(--font-display); font-size: 18px; color: var(--mocha-deep); margin: 0; display: flex; align-items: center; gap: 8px;">
-                <i class="fas fa-receipt" style="color: var(--sage);"></i>Cart
-              </h2>
-              <button id="clear-cart"
-                style="background: var(--red-soft); color: white; padding: 6px 12px; border-radius: 6px; font-size: 12px; border: none; cursor: pointer; font-weight: 600;">Clear</button>
-            </div>
-            <div id="cart-items"></div>
-            <div id="cart-totals"></div>
-            <button id="checkout-btn" class="checkout-btn" disabled><i class="fas fa-credit-card"></i> Checkout</button>
-          </div>
-        </section>
       </main>
+
+      <button id="cart-fab" class="cart-fab" onclick="toggleCartPanel()">
+        <span class="cart-fab-icon">
+          <i class="fas fa-shopping-cart"></i>
+          <span id="cart-count" class="cart-fab-badge">0</span>
+        </span>
+        <span class="cart-fab-total" id="cart-fab-total">₱0.00</span>
+      </button>
+
+      <div id="cart-panel" class="cart-panel">
+        <div class="cart-panel-header">
+          <h2><i class="fas fa-receipt" style="color: var(--sage);"></i>Cart</h2>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <button id="clear-cart" class="cart-panel-clear">Clear</button>
+            <button type="button" class="cart-panel-close" onclick="toggleCartPanel()">&times;</button>
+          </div>
+        </div>
+        <div class="cart-panel-body">
+          <div id="cart-items"></div>
+        </div>
+        <div class="cart-panel-footer">
+          <div id="cart-totals"></div>
+          <button id="checkout-btn" class="checkout-btn" disabled><i class="fas fa-credit-card"></i> Checkout</button>
+        </div>
+      </div>
+      <div id="size-choice-modal" class="modal-overlay">
+        <div class="modal-box" style="max-width: 360px;">
+          <div class="modal-header">
+            <h2 class="modal-title" id="size-choice-title">Choose a size</h2>
+            <button class="modal-close" onclick="closeSizePicker()">&times;</button>
+          </div>
+          <div id="size-choice-list" style="margin: 16px 0;"></div>
+          <div class="modal-actions">
+            <button class="btn-cancel" onclick="closeSizePicker()">Cancel</button>
+            <button class="btn-confirm" onclick="confirmSizeChoice()">Continue</button>
+          </div>
+        </div>
+      </div>
       <div id="flavor-choice-modal" class="modal-overlay">
         <div class="modal-box" style="max-width: 360px;">
           <div class="modal-header">
@@ -1433,6 +1624,9 @@ while ($row = $prodResult->fetch_assoc()) {
       </div>
       <div id="receipt-modal" class="modal-overlay">
         <div class="modal-box" style="max-width: 400px; border: 2px dashed var(--cream-dark);">
+          <div id="receipt-back-row" style="display:none; margin-bottom:14px;">
+            <button class="btn-cancel" style="width:auto;padding:7px 16px;font-size:13px;" onclick="backToCheckout()"><i class="fas fa-arrow-left" style="margin-right:6px;"></i>Back</button>
+          </div>
           <div style="text-align: center; margin-bottom: 20px;">
             <div class="pos-logo" style="margin: 0 auto 10px;"><i class="fas fa-mug-hot"></i></div>
             <div style="font-family: var(--font-display); font-weight: 700; color: var(--mocha-deep); font-size: 15px;"><?= htmlspecialchars($settings['cafe_name']) ?></div>
@@ -1455,9 +1649,18 @@ while ($row = $prodResult->fetch_assoc()) {
               <p style="font-family: var(--font-display); font-weight: 700; color: var(--mocha);"><?= htmlspecialchars($settings['receipt_footer_message']) ?>
               </p>
             <?php endif; ?>
-            <button class="btn-confirm" style="margin-top: 15px; width: 100%;" onclick="closeReceiptModal()">Done & New
+            <button id="receipt-confirm-btn" class="btn-confirm" style="margin-top: 15px; width: 100%; display:none;" onclick="finalizeCheckout()">Confirm & Complete Sale</button>
+            <button id="receipt-done-btn" class="btn-confirm" style="margin-top: 15px; width: 100%;" onclick="requestNewSale()">Done & New
               Sale</button>
           </div>
+        </div>
+      </div>
+      <div id="modal-confirm-newsale" class="modal-overlay">
+        <div class="modal-box" style="max-width:360px;">
+          <h2 class="modal-title">Start a New Sale?</h2>
+          <p style="font-size:13px;color:var(--charcoal-mid);margin-bottom:18px;">This will close the receipt and clear the cart for the next customer.</p>
+          <button class="btn-confirm" style="width:100%;" onclick="confirmNewSale()">Yes, Start New Sale</button>
+          <button class="btn-cancel" style="width:100%;margin-top:8px;" onclick="cancelNewSale()">Cancel</button>
         </div>
       </div>
       <div id="checkout-modal" class="modal-overlay">
@@ -1492,18 +1695,8 @@ while ($row = $prodResult->fetch_assoc()) {
             </div>
             <div class="payment-option" data-payment="ewallet">
               <input type="radio" class="payment-radio" name="payment" value="ewallet">
-              <div><i class="fas fa-mobile-alt" style="font-size: 20px;"></i> E-Wallet (Gcash)</div>
+              <div><i class="fas fa-mobile-alt" style="font-size: 20px;"></i> Online Payment</div>
             </div>
-          </div>
-          <div class="ewallet-qr-section" id="ewallet-qr-section" style="display:none;">
-            <h4
-              style="font-family: var(--font-display); font-size: 14px; color: var(--mocha-deep); margin-bottom: 10px;">
-              Scan to Pay via GCash</h4>
-            <?php if ($settings['ewallet_qr_image'] !== ''): ?>
-              <img src="../<?= htmlspecialchars($settings['ewallet_qr_image']) ?>" alt="GCash QR code">
-            <?php else: ?>
-              <div class="ewallet-qr-empty">No QR code has been uploaded yet. Add one in System Settings.</div>
-            <?php endif; ?>
           </div>
           <div class="cash-section">
             <h4
@@ -1512,9 +1705,15 @@ while ($row = $prodResult->fetch_assoc()) {
             <input type="number" id="amount-tendered-input" class="cash-input" min="0" step="0.01" placeholder="0.00">
             <div id="change-preview" class="change-preview"></div>
           </div>
+          <div class="notes-section">
+            <h4
+              style="font-family: var(--font-display); font-size: 16px; color: var(--mocha-deep); margin-bottom: 12px; display:flex; align-items:center; gap:8px;">
+              <i class="fas fa-note-sticky" style="color:var(--gold);"></i>Notes <span style="font-size:12px;color:#aaa;font-weight:400;">(optional)</span></h4>
+            <textarea id="checkout-notes-input" rows="2" maxlength="500" placeholder="e.g. no ice, allergy warning, special request…" style="width:100%;padding:10px 13px;border-radius:8px;border:1.5px solid var(--cream-dark);background:var(--cream-light);font-family:var(--font-body);font-size:13px;color:var(--charcoal);outline:none;resize:vertical;"></textarea>
+          </div>
           <div class="modal-actions">
             <button class="btn-cancel" onclick="closeCheckoutModal()">Cancel</button>
-            <button class="btn-confirm" onclick="confirmCheckout()">Complete Sale</button>
+            <button class="btn-confirm" onclick="showReceiptPreview()">Review Order</button>
           </div>
         </div>
       </div>
@@ -1528,6 +1727,13 @@ while ($row = $prodResult->fetch_assoc()) {
           if (c.includes('hot')) return '☕';
           if (c.includes('pastr') || c.includes('bread') || c.includes('bake')) return '🥐';
           return '🍽️';
+        }
+        // Escapes free-text (e.g. the cashier's note) before it's interpolated into innerHTML —
+        // unlike item/product names, notes are typed fresh each sale and could contain HTML.
+        function escapeHtml(str) {
+          const div = document.createElement('div');
+          div.textContent = str ?? '';
+          return div.innerHTML;
         }
         // Plain-text "Name — Size (Flavor)" label used in the checkout summary and receipt.
         function itemLabel(item) {
@@ -1549,8 +1755,12 @@ while ($row = $prodResult->fetch_assoc()) {
         const DISCOUNT_RATE = <?= (float)$settings['discount_rate'] ?>;
         // DOM
         const productsGrid = document.getElementById('products-grid');
-        const miniCartTotal = document.getElementById('mini-cart-total-value');
+        const cartItems = document.getElementById('cart-items');
+        const cartTotals = document.getElementById('cart-totals');
         const cartBadge = document.getElementById('cart-count');
+        const cartFabTotal = document.getElementById('cart-fab-total');
+        const cartPanel = document.getElementById('cart-panel');
+        const cartFab = document.getElementById('cart-fab');
         const checkoutBtn = document.getElementById('checkout-btn');
         const clearCartBtn = document.getElementById('clear-cart');
         const checkoutModal = document.getElementById('checkout-modal');
@@ -1562,6 +1772,8 @@ while ($row = $prodResult->fetch_assoc()) {
         let currentPaymentMethod = 'cash';
         document.addEventListener('DOMContentLoaded', () => {
           renderProducts();
+          renderCart();
+          updateBadge();
           updateClock();
           setInterval(updateClock, 1000);
 
@@ -1574,7 +1786,13 @@ while ($row = $prodResult->fetch_assoc()) {
           searchInput.addEventListener('input', () => renderProducts(currentCategory));
 
           // Modal interactions
-          document.querySelectorAll('.discount-checkbox').forEach(cb => cb.addEventListener('change', updateCheckoutTotals));
+          // Only one discount reason applies per sale — checking one clears the other.
+          document.querySelectorAll('.discount-checkbox').forEach(cb => cb.addEventListener('change', () => {
+            if (cb.checked) {
+              document.querySelectorAll('.discount-checkbox').forEach(other => { if (other !== cb) other.checked = false; });
+            }
+            updateCheckoutTotals();
+          }));
           document.querySelectorAll('.payment-option').forEach(opt => opt.addEventListener('click', e => selectPayment(e.currentTarget.dataset.payment, e.currentTarget)));
           amountInput.addEventListener('input', () => { amountManuallyEdited = true; updateChangePreview(); });
         });
@@ -1597,17 +1815,17 @@ while ($row = $prodResult->fetch_assoc()) {
           }
 
           productsGrid.innerHTML = filtered.map(p => {
-            // Stock now gates every product's availability, made-to-order included — checkout
-            // additionally checks ingredient stock for made-to-order recipes server-side.
+            // Made-to-order products have no stock of their own — availability is governed by
+            // ingredient stock, checked server-side at checkout.
             const isMotd = p.type === 'made_to_order';
-            const outOfStock = p.stock <= 0;
+            const outOfStock = !isMotd && p.stock <= 0;
             const lowStock = !outOfStock && p.stock <= 5;
             const pillClass = outOfStock ? 'out' : lowStock ? 'low' : 'ok';
             const pillText = outOfStock ? 'Out of stock' : lowStock ? `${p.stock} left` : `${p.stock} in stock`;
             const qtyInCart = cart.filter(i => i.id === p.id).reduce((sum, i) => sum + i.qty, 0);
             return `<button class="product-btn" data-product-id="${p.id}" ${outOfStock ? 'disabled style="opacity:.5;cursor:not-allowed;"' : ''}>
           ${qtyInCart > 0 ? `<div class="cart-qty-badge">${qtyInCart}</div>` : ''}
-          <div class="stock-pill ${pillClass}">${pillText}</div>
+          ${isMotd ? '' : `<div class="stock-pill ${pillClass}">${pillText}</div>`}
           <div class="product-icon">${p.image ? `<img src="${p.image}" alt="">` : iconFor(p.category_name)}</div>
           <div class="product-name">${p.name}${isMotd ? ' <span style="font-size:9px;color:#aaa;font-weight:600;">(Made to Order)</span>' : ''}</div>
           <div class="product-price">₱${p.price.toLocaleString()}</div>
@@ -1629,7 +1847,7 @@ while ($row = $prodResult->fetch_assoc()) {
         function addToCart(id) {
           const product = products.find(p => p.id === id);
           if (!product) return;
-          if (product.stock <= 0) return;
+          if (product.type !== 'made_to_order' && product.stock <= 0) return;
 
           if (product.variants && product.variants.length > 0) {
             openSizePicker(product);
@@ -1706,7 +1924,7 @@ while ($row = $prodResult->fetch_assoc()) {
           const cartKey = [product.id, variantId, flavorId].filter(v => v !== null && v !== undefined).join(':');
           const item = cart.find(i => i.cartKey === cartKey);
           const currentQty = item ? item.qty : 0;
-          if (currentQty >= product.stock) {
+          if (product.type !== 'made_to_order' && currentQty >= product.stock) {
             showToast(`Only ${product.stock} unit(s) of ${product.name} available.`, 'warn');
             return;
           }
@@ -1720,7 +1938,7 @@ while ($row = $prodResult->fetch_assoc()) {
           const item = cart.find(i => i.cartKey === cartKey);
           if (!item) return;
           const product = products.find(p => p.id === item.id);
-          if (delta > 0 && product && item.qty >= product.stock) {
+          if (delta > 0 && product && product.type !== 'made_to_order' && item.qty >= product.stock) {
             showToast(`Only ${product.stock} unit(s) of ${product.name} available.`, 'warn');
             return;
           }
@@ -1742,10 +1960,22 @@ while ($row = $prodResult->fetch_assoc()) {
           updateBadge();
           renderProducts(currentCategory);
         }
+        function toggleCartPanel() {
+          cartPanel.classList.toggle('show');
+        }
+        function closeCartPanel() {
+          cartPanel.classList.remove('show');
+        }
+        document.addEventListener('click', e => {
+          if (cartPanel.classList.contains('show') && !cartPanel.contains(e.target) && !cartFab.contains(e.target)) {
+            closeCartPanel();
+          }
+        });
         function renderCart() {
           if (cart.length === 0) {
             cartItems.innerHTML = '<div class="cart-empty"><i class="fas fa-shopping-cart" style="font-size: 48px; color: #ccc; margin-bottom: 12px;"></i>Add items to get started</div>';
             cartTotals.innerHTML = '';
+            cartFabTotal.textContent = '₱0.00';
             checkoutBtn.disabled = true;
             return;
           }
@@ -1754,28 +1984,30 @@ while ($row = $prodResult->fetch_assoc()) {
             const total = item.price * item.qty;
             return `
       <div class="cart-item">
-        <div class="item-left">
-          <div class="item-details">
-            <div class="item-name">${item.name}${item.flavor_name ? ` <span style="color:#aaa;font-weight:400;">(${item.flavor_name})</span>` : ''}</div>
-            <div class="item-qty-price">₱${item.price.toLocaleString()} each</div>
-          </div>
+        <div class="item-details">
+          <div class="item-name">${cartItemNameHtml(item)}</div>
+          <div class="item-qty-price">₱${item.price.toLocaleString()} each</div>
         </div>
-        <div style="display: flex; align-items: center; gap: 12px;">
-          <div class="qty-controls">
-            <button class="qty-btn" onclick="updateQty('${item.cartKey}', -1)">−</button>
-            <div class="qty-display">${item.qty}</div>
-            <button class="qty-btn" onclick="updateQty('${item.cartKey}', 1)">+</button>
-          </div>
-          <div class="item-total">₱${total.toLocaleString()}</div>
+        <div class="qty-controls">
+          <button class="qty-btn" onclick="updateQty('${item.cartKey}', -1)">−</button>
+          <div class="qty-display">${item.qty}</div>
+          <button class="qty-btn" onclick="updateQty('${item.cartKey}', 1)">+</button>
         </div>
+        <div class="item-total">₱${total.toLocaleString()}</div>
       </div>
     `;
           }).join('');
 
-          // NEW LOGIC: Price is already the Total
           const total = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
-          miniCartTotal.textContent = '₱' + total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-          checkoutBtn.disabled = cart.length === 0;
+          const totalFormatted = total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+          cartTotals.innerHTML = `
+      <div class="cart-total-row">
+        <span class="total-label">Total</span>
+        <span class="grand-total">₱${totalFormatted}</span>
+      </div>
+    `;
+          cartFabTotal.textContent = '₱' + totalFormatted;
+          checkoutBtn.disabled = false;
         }
         function updateBadge() {
           if (!cartBadge) return;
@@ -1785,6 +2017,7 @@ while ($row = $prodResult->fetch_assoc()) {
         }
         function showCheckoutModal() {
           if (cart.length === 0) return;
+          closeCartPanel();
           amountManuallyEdited = false;
           checkoutModal.classList.add('show');
           renderOrderSummary();
@@ -1808,7 +2041,7 @@ while ($row = $prodResult->fetch_assoc()) {
             return;
           }
           if (currentPaymentMethod === 'ewallet') {
-            changePreview.textContent = 'Exact amount charged via E-Wallet — no change due';
+            changePreview.textContent = 'Exact amount charged via Online Payment — no change due';
             changePreview.classList.remove('negative');
             return;
           }
@@ -1878,62 +2111,21 @@ while ($row = $prodResult->fetch_assoc()) {
           document.querySelectorAll('.payment-option').forEach(opt => opt.classList.remove('active'));
           el.classList.add('active');
           currentPaymentMethod = method;
-          document.getElementById('ewallet-qr-section').style.display = method === 'ewallet' ? 'block' : 'none';
           updateCheckoutTotals();
         }
-        async function confirmCheckout() {
+        // Builds the receipt HTML from the current cart/discount/payment state — used both for
+        // the pre-save preview (transactionId = null) and the real final receipt (once saved),
+        // so there's one source of truth for how a receipt renders.
+        function buildReceiptHtml(transactionId) {
           const totalOriginal = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
           const hasDiscount = document.getElementById('pwd-discount').checked || document.getElementById('senior-discount').checked;
           const discountVal = hasDiscount ? totalOriginal * DISCOUNT_RATE : 0;
           const finalPayable = totalOriginal - discountVal;
           const paymentMethod = document.querySelector('.payment-option.active').dataset.payment;
-
-          // 1. Read the amount tendered from the in-page field
+          const paymentLabel = paymentMethod === 'ewallet' ? 'ONLINE' : 'CASH';
           const amountTendered = parseFloat(amountInput.value);
-
-          if (isNaN(amountTendered) || amountTendered < finalPayable) {
-            showToast('Insufficient amount entered.', 'warn');
-            amountInput.focus();
-            return;
-          }
-
           const change = amountTendered - finalPayable;
-
-          // 1b. Persist the sale to the database
-          const confirmBtn = document.querySelector('#checkout-modal .btn-confirm');
-          confirmBtn.disabled = true;
-          confirmBtn.textContent = 'Processing…';
-
-          let serverResult;
-          try {
-            const response = await fetch('transactions.php', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: new URLSearchParams({
-                action: 'checkout',
-                cart: JSON.stringify(cart.map(i => ({ id: i.id, qty: i.qty, flavor_ingredient_id: i.flavor_ingredient_id || null, variant_id: i.variant_id || null }))),
-                payment_method: paymentMethod,
-                discount: hasDiscount ? '1' : ''
-              })
-            });
-            serverResult = await response.json();
-          } catch (err) {
-            confirmBtn.disabled = false;
-            confirmBtn.textContent = 'Complete Sale';
-            showToast('Could not reach the server. Please try again.', 'warn');
-            return;
-          }
-
-          confirmBtn.disabled = false;
-          confirmBtn.textContent = 'Complete Sale';
-
-          if (!serverResult || !serverResult.success) {
-            showToast(serverResult && serverResult.error ? serverResult.error : 'Transaction failed.', 'warn');
-            return;
-          }
-
-          // 2. Build Receipt UI
-          document.getElementById('receipt-date').textContent = new Date().toLocaleString();
+          const notesText = document.getElementById('checkout-notes-input').value.trim();
 
           const itemsHtml = cart.map(i => `
     <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
@@ -1942,8 +2134,8 @@ while ($row = $prodResult->fetch_assoc()) {
     </div>
   `).join('');
 
-          document.getElementById('receipt-content').innerHTML = `
-    <div style="text-align:center;font-size:11px;color:#999;margin-bottom:10px;">Transaction #${serverResult.transaction_id}</div>
+          return `
+    ${transactionId ? `<div style="text-align:center;font-size:11px;color:#999;margin-bottom:10px;">Transaction #${transactionId}</div>` : ''}
     <div style="border-bottom: 1px solid var(--cream-dark); padding-bottom: 10px; margin-bottom: 10px;">
       ${itemsHtml}
     </div>
@@ -1961,29 +2153,108 @@ while ($row = $prodResult->fetch_assoc()) {
       <span>₱${finalPayable.toLocaleString()}</span>
     </div>
     <div style="display: flex; justify-content: space-between; font-size: 13px; color: var(--charcoal-mid);">
-      <span>Paid (${paymentMethod.toUpperCase()}):</span>
+      <span>Paid (${paymentLabel}):</span>
       <span>₱${amountTendered.toLocaleString()}</span>
     </div>
     <div style="display: flex; justify-content: space-between; font-weight: 700; color: var(--sage); margin-bottom: 10px;">
       <span>CHANGE:</span>
       <span>₱${change.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
     </div>
+    ${notesText ? `<div style="margin-top:8px;padding-top:10px;border-top:1px dashed var(--cream-dark);font-size:12px;color:var(--charcoal-mid);"><strong>Note:</strong> ${escapeHtml(notesText)}</div>` : ''}
     <div style="font-size: 11px; color: #999; text-align: center; margin-top: 15px;">
       VAT Included (12%): ₱${(finalPayable - (finalPayable / 1.12)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
     </div>
   `;
+        }
 
-          // 3. Show Modal
+        // Shows a preview of the receipt before anything is saved — no server call here, so
+        // "Back" can safely return to the checkout modal with nothing to undo.
+        function showReceiptPreview() {
+          const totalOriginal = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
+          const hasDiscount = document.getElementById('pwd-discount').checked || document.getElementById('senior-discount').checked;
+          const discountVal = hasDiscount ? totalOriginal * DISCOUNT_RATE : 0;
+          const finalPayable = totalOriginal - discountVal;
+          const amountTendered = parseFloat(amountInput.value);
+
+          if (isNaN(amountTendered) || amountTendered < finalPayable) {
+            showToast('Insufficient amount entered.', 'warn');
+            amountInput.focus();
+            return;
+          }
+
+          document.getElementById('receipt-date').textContent = new Date().toLocaleString();
+          document.getElementById('receipt-content').innerHTML = buildReceiptHtml(null);
+          document.getElementById('receipt-back-row').style.display = 'block';
+          document.getElementById('receipt-confirm-btn').style.display = 'block';
+          document.getElementById('receipt-done-btn').style.display = 'none';
+
           closeCheckoutModal();
           document.getElementById('receipt-modal').classList.add('show');
         }
 
+        // Returns to the checkout modal from the preview — its DOM was only hidden, never
+        // cleared, so the cart/discount/payment/amount-tendered are all still exactly as left.
+        function backToCheckout() {
+          document.getElementById('receipt-modal').classList.remove('show');
+          checkoutModal.classList.add('show');
+        }
+
+        // Actually persists the sale — inserts the transaction and deducts stock/ingredients.
+        async function finalizeCheckout() {
+          const hasDiscount = document.getElementById('pwd-discount').checked || document.getElementById('senior-discount').checked;
+          const paymentMethod = document.querySelector('.payment-option.active').dataset.payment;
+
+          const confirmBtn = document.getElementById('receipt-confirm-btn');
+          confirmBtn.disabled = true;
+          confirmBtn.textContent = 'Processing…';
+
+          let serverResult;
+          try {
+            const response = await fetch('transactions.php', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({
+                action: 'checkout',
+                cart: JSON.stringify(cart.map(i => ({ id: i.id, qty: i.qty, flavor_ingredient_id: i.flavor_ingredient_id || null, variant_id: i.variant_id || null }))),
+                payment_method: paymentMethod,
+                discount: hasDiscount ? '1' : '',
+                notes: document.getElementById('checkout-notes-input').value.trim()
+              })
+            });
+            serverResult = await response.json();
+          } catch (err) {
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = 'Confirm & Complete Sale';
+            showToast('Could not reach the server. Please try again.', 'warn');
+            return;
+          }
+
+          confirmBtn.disabled = false;
+          confirmBtn.textContent = 'Confirm & Complete Sale';
+
+          if (!serverResult || !serverResult.success) {
+            showToast(serverResult && serverResult.error ? serverResult.error : 'Transaction failed.', 'warn');
+            return;
+          }
+
+          document.getElementById('receipt-content').innerHTML = buildReceiptHtml(serverResult.transaction_id);
+          document.getElementById('receipt-back-row').style.display = 'none';
+          document.getElementById('receipt-confirm-btn').style.display = 'none';
+          document.getElementById('receipt-done-btn').style.display = 'block';
+        }
+
+        function requestNewSale() {
+          document.getElementById('modal-confirm-newsale').classList.add('show');
+        }
+        function cancelNewSale() {
+          document.getElementById('modal-confirm-newsale').classList.remove('show');
+        }
         // Reload so the product list reflects the stock the sale just consumed
-        function closeReceiptModal() {
+        function confirmNewSale() {
           location.reload();
         }
         function updateClock() {
-          clockEl.textContent = new Date().toLocaleTimeString('en-PH', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+          clockEl.textContent = new Date().toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
         }
         function showToast(msg, type = 'success') {
           const c = document.getElementById('toast-container');

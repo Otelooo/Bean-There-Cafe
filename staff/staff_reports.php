@@ -1,6 +1,7 @@
 <?php
 session_start();
 require_once __DIR__ . '/../db_connect.php';
+require_once __DIR__ . '/../settings_helper.php';
 
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'cafe staff') {
     header('Location: ../signin.php');
@@ -279,6 +280,15 @@ function build_staff_sales_report(mysqli $conn, int $userId, string $period, int
         'topProducts' => $topProducts,
     ];
 }
+
+// Feeds the "Inventory" nav-badge — ingredients at critical or low stock.
+$navSettings = get_system_settings($conn);
+$navLowStockThreshold = (float)$navSettings['low_stock_threshold'];
+$stmt = $conn->prepare("SELECT COUNT(*) AS cnt FROM product_ingredients WHERE (ingredient_stock_reference IS NULL AND ingredient_stock <= 0) OR (ingredient_stock_reference > 0 AND (ingredient_stock / ingredient_stock_reference) * 100 <= ?)");
+$stmt->bind_param('d', $navLowStockThreshold);
+$stmt->execute();
+$ingredientAlertCount = (int)$stmt->get_result()->fetch_assoc()['cnt'];
+$stmt->close();
 
 $displayName = $_SESSION['username'] ?? 'Staff';
 $initials = strtoupper(substr($displayName, 0, 2));
@@ -967,6 +977,10 @@ $initialReport = build_staff_sales_report($conn, $staffUserId, 'daily', 0, $toda
 
     .period-tab {
       padding: 7px 20px;
+      height: 38px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       border-radius: 8px;
       font-size: 13px;
       font-weight: 600;
@@ -1196,8 +1210,13 @@ $initialReport = build_staff_sales_report($conn, $staffUserId, 'daily', 0, $toda
     <div class="sidebar-section-label">Staff Panel</div>
     <a href="staffdashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
     <a href="staff_transactions.php" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
+    <a href="staff_transaction_history.php" class="nav-item"><i class="fas fa-clock-rotate-left"></i> Transaction History</a>
     <a href="staff_products.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Products</a>
-    <a href="staff_inventory.php" class="nav-item"><i class="fas fa-warehouse"></i> Inventory</a>
+    <a href="staff_inventory.php" class="nav-item"><i class="fas fa-warehouse"></i> Inventory
+      <?php if ($ingredientAlertCount > 0): ?>
+        <span class="nav-badge"><?= $ingredientAlertCount ?></span>
+      <?php endif; ?>
+    </a>
     <a href="staff_reports.php" class="nav-item active"><i class="fas fa-chart-bar"></i> Sales Report</a>
     <hr class="sidebar-divider" />
     
@@ -1222,16 +1241,16 @@ $initialReport = build_staff_sales_report($conn, $staffUserId, 'daily', 0, $toda
     <div style="padding:22px 26px;">
 
       <div id="report-toolbar"
-        style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:15px;">
+        style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:nowrap; overflow-x:auto; padding-bottom:4px; gap:12px;">
 
-        <div class="period-tabs" id="period-tabs">
+        <div class="period-tabs" id="period-tabs" style="flex-shrink:0;">
           <button class="period-tab active" onclick="switchPeriod('daily',this)">Daily</button>
           <button class="period-tab" onclick="switchPeriod('weekly',this)">Weekly</button>
           <button class="period-tab" onclick="switchPeriod('monthly',this)">Monthly</button>
           <button class="period-tab" onclick="switchPeriod('yearly',this)">Yearly</button>
         </div>
 
-        <div style="display:flex; gap:12px; align-items:center;">
+        <div style="display:flex; gap:12px; align-items:center; flex-shrink:0;">
 
           <div class="time-filter-wrapper" title="Filter by hours of the day">
             <label class="all-day-label">
@@ -1239,7 +1258,7 @@ $initialReport = build_staff_sales_report($conn, $staffUserId, 'daily', 0, $toda
             </label>
 
             <div id="time-inputs"
-              style="display:none; align-items:center; gap:8px; padding-left:10px; border-left:1.5px solid var(--cream-dark); margin-left:4px;">
+              style="display:flex; visibility:hidden; pointer-events:none; align-items:center; gap:8px; padding-left:10px; border-left:1.5px solid var(--cream-dark); margin-left:4px;">
               <i class="fas fa-clock" style="color:#aaa; font-size:13px;"></i>
               <input type="time" id="time-start" value="07:00" onchange="updateReportDisplay()">
               <span style="font-size:12px; color:#aaa; font-weight:600;">to</span>
@@ -1376,7 +1395,9 @@ $initialReport = build_staff_sales_report($conn, $staffUserId, 'daily', 0, $toda
     // Shows or hides the specific time inputs based on the All Day checkbox
     function toggleAllDay() {
       const isAllDay = document.getElementById('all-day-cb').checked;
-      document.getElementById('time-inputs').style.display = isAllDay ? 'none' : 'flex';
+      const timeInputs = document.getElementById('time-inputs');
+      timeInputs.style.visibility = isAllDay ? 'hidden' : 'visible';
+      timeInputs.style.pointerEvents = isAllDay ? 'none' : 'auto';
       fetchReport();
     }
 

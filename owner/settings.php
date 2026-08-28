@@ -76,13 +76,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif (!is_numeric($discountRatePercent) || (float)$discountRatePercent < 0 || (float)$discountRatePercent > 100) {
         $msg = 'Discount rate must be a number between 0 and 100.';
         $msgType = 'warn';
-    } elseif (!ctype_digit((string)$criticalThreshold)) {
-        $msg = 'Critical stock threshold must be a whole number.';
+    } elseif (!is_numeric($criticalThreshold) || (float)$criticalThreshold < 0 || (float)$criticalThreshold > 100) {
+        $msg = 'Critical stock threshold must be a percentage between 0 and 100.';
         $msgType = 'warn';
-    } elseif (!ctype_digit((string)$lowThreshold)) {
-        $msg = 'Low stock threshold must be a whole number.';
+    } elseif (!is_numeric($lowThreshold) || (float)$lowThreshold < 0 || (float)$lowThreshold > 100) {
+        $msg = 'Low stock threshold must be a percentage between 0 and 100.';
         $msgType = 'warn';
-    } elseif ((int)$lowThreshold < (int)$criticalThreshold) {
+    } elseif ((float)$lowThreshold < (float)$criticalThreshold) {
         $msg = 'Low stock threshold must be greater than or equal to the critical threshold.';
         $msgType = 'warn';
     } else {
@@ -105,8 +105,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'cafe_contact' => $cafeContact,
                 'tax_rate' => number_format((float)$taxRatePercent / 100, 4, '.', ''),
                 'discount_rate' => number_format((float)$discountRatePercent / 100, 4, '.', ''),
-                'critical_stock_threshold' => (string)(int)$criticalThreshold,
-                'low_stock_threshold' => (string)(int)$lowThreshold,
+                'critical_stock_threshold' => (string)(float)$criticalThreshold,
+                'low_stock_threshold' => (string)(float)$lowThreshold,
                 'receipt_footer_message' => $receiptFooter,
                 'ewallet_qr_image' => $ewalletQrImage,
             ];
@@ -138,11 +138,12 @@ $settings = get_system_settings($conn);
 $taxRatePercentDisplay = rtrim(rtrim(number_format((float)$settings['tax_rate'] * 100, 2, '.', ''), '0'), '.');
 $discountRatePercentDisplay = rtrim(rtrim(number_format((float)$settings['discount_rate'] * 100, 2, '.', ''), '0'), '.');
 
-$stmt = $conn->prepare('SELECT COUNT(*) AS cnt FROM products WHERE product_stocks <= ?');
-$criticalThresholdInt = (int)$settings['critical_stock_threshold'];
-$stmt->bind_param('i', $criticalThresholdInt);
+// Feeds the "Inventory" nav-badge — ingredients at critical OR low stock (not products).
+$lowThresholdFloat = (float)$settings['low_stock_threshold'];
+$stmt = $conn->prepare("SELECT COUNT(*) AS cnt FROM product_ingredients WHERE (ingredient_stock_reference IS NULL AND ingredient_stock <= 0) OR (ingredient_stock_reference > 0 AND (ingredient_stock / ingredient_stock_reference) * 100 <= ?)");
+$stmt->bind_param('d', $lowThresholdFloat);
 $stmt->execute();
-$criticalCount = (int)$stmt->get_result()->fetch_assoc()['cnt'];
+$ingredientAlertCount = (int)$stmt->get_result()->fetch_assoc()['cnt'];
 $stmt->close();
 ?>
 <!DOCTYPE html>
@@ -340,10 +341,11 @@ $stmt->close();
   <div class="sidebar-section-label">Owner Panel</div>
   <a href="dashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
   <a href="transactions.php" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
+  <a href="transaction_history.php" class="nav-item"><i class="fas fa-clock-rotate-left"></i> Transaction History</a>
   <a href="products.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Products</a>
   <a href="inventory.php" class="nav-item"><i class="fas fa-warehouse"></i> Inventory
-    <?php if ($criticalCount > 0): ?>
-      <span class="nav-badge"><?= $criticalCount ?></span>
+    <?php if ($ingredientAlertCount > 0): ?>
+      <span class="nav-badge"><?= $ingredientAlertCount ?></span>
     <?php endif; ?>
   </a>
   <a href="reports.php" class="nav-item"><i class="fas fa-chart-bar"></i> Sales Report</a>
@@ -351,7 +353,7 @@ $stmt->close();
   <hr class="sidebar-divider"/>
   <div class="sidebar-section-label">Settings</div>
   <a href="settings.php" class="nav-item active"><i class="fas fa-gear"></i> System Settings</a>
-  <div class="nav-item" onclick="showToast('Backup started!','success')"><i class="fas fa-database"></i> Data Backup</div>
+  <a href="backup.php" class="nav-item"><i class="fas fa-database"></i> Data Backup</a>
 </nav>
 
 <div id="main">
@@ -428,17 +430,17 @@ $stmt->close();
 
         <div class="settings-card">
           <div class="settings-card-title"><i class="fas fa-triangle-exclamation"></i>Inventory Alerts</div>
-          <div class="settings-card-sub">Controls the OK / Low / Critical stock labels and dashboard alerts.</div>
+          <div class="settings-card-sub">Controls the OK / Low / Critical stock labels and dashboard alerts. Both are a percentage of the amount last set/restocked for each item, not a raw unit count.</div>
           <div class="settings-field-row">
             <div class="settings-field">
-              <label>Critical Stock Threshold</label>
-              <input type="number" name="critical_stock_threshold" value="<?= htmlspecialchars($settings['critical_stock_threshold']) ?>" min="0" step="1" required>
-              <div class="hint">Stock at or below this is "Critical".</div>
+              <label>Critical Stock Threshold (%)</label>
+              <input type="number" name="critical_stock_threshold" value="<?= htmlspecialchars($settings['critical_stock_threshold']) ?>" min="0" max="100" step="0.1" required>
+              <div class="hint">Stock at or below this % of the last restocked amount is "Critical".</div>
             </div>
             <div class="settings-field">
-              <label>Low Stock Threshold</label>
-              <input type="number" name="low_stock_threshold" value="<?= htmlspecialchars($settings['low_stock_threshold']) ?>" min="0" step="1" required>
-              <div class="hint">Stock at or below this (but above critical) is "Low".</div>
+              <label>Low Stock Threshold (%)</label>
+              <input type="number" name="low_stock_threshold" value="<?= htmlspecialchars($settings['low_stock_threshold']) ?>" min="0" max="100" step="0.1" required>
+              <div class="hint">Stock at or below this % (but above critical) is "Low".</div>
             </div>
           </div>
         </div>

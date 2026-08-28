@@ -123,6 +123,32 @@ function save_product_recipe(mysqli $conn, int $productId, string $productType, 
     $checkStmt->close();
 }
 
+// Replaces a product's sizes/options with whatever rows were submitted on the Add/Edit form —
+// same delete-then-reinsert shape as save_product_recipe(), but with no product-type gate, since
+// sizes apply to any product (the standalone "Sizes" button already works for both types).
+function save_product_variants(mysqli $conn, int $productId, array $variantNames, array $variantPrices): void
+{
+    $del = $conn->prepare('DELETE FROM product_variants WHERE product_id = ?');
+    $del->bind_param('i', $productId);
+    $del->execute();
+    $del->close();
+
+    $ins = $conn->prepare('INSERT INTO product_variants (product_id, variant_name, variant_price, sort_order) VALUES (?, ?, ?, ?)');
+    $sort = 0;
+    foreach ($variantNames as $i => $rawName) {
+        $name = trim($rawName);
+        $price = $variantPrices[$i] ?? '';
+        if ($name === '' || !is_numeric($price) || (float)$price < 0) {
+            continue;
+        }
+        $priceVal = (float)$price;
+        $ins->bind_param('isdi', $productId, $name, $priceVal, $sort);
+        $ins->execute();
+        $sort++;
+    }
+    $ins->close();
+}
+
 function resolve_supplier_id(mysqli $conn, string $supplierName, string $supplierContact): int
 {
     $name = trim($supplierName);
@@ -219,7 +245,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($name === '' || !is_numeric($price) || (float)$price < 0) {
             $msg = 'Please fill in all product fields with valid values.';
             $msgType = 'warn';
-        } elseif (!is_numeric($stock) || (int)$stock < 0 || !is_numeric($cost) || (float)$cost < 0) {
+        } elseif ($isPrepared && (!is_numeric($stock) || (int)$stock < 0)) {
+            $msg = 'Please fill in all product fields with valid values.';
+            $msgType = 'warn';
+        } elseif (!is_numeric($cost) || (float)$cost < 0) {
             $msg = 'Please fill in all product fields with valid values.';
             $msgType = 'warn';
         } else {
@@ -227,10 +256,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $categoryId = resolve_category_id($conn, $_POST['category'] ?? '');
                 $priceVal = (float)$price;
                 $newImagePath = handle_product_image_upload($_FILES['product_image'] ?? null);
-                // Made to Order products still record a stock count and unit cost for reference,
-                // but neither one gates checkout availability — that's governed by the recipe's
-                // ingredient stock instead (see the ingredient check in transactions.php).
-                $stockInt = (int)$stock;
+                // Made to Order products have no stock count of their own — availability is governed
+                // by the recipe's ingredient stock instead (see the ingredient check in transactions.php).
+                $stockInt = $isPrepared ? (int)$stock : 0;
                 $costVal = (float)$cost;
 
                 if ($isPrepared) {
@@ -240,13 +268,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 if ($action === 'add') {
-                    $stmt = $conn->prepare('INSERT INTO products (product_name, product_category_id, product_stocks, product_cost, product_selling_price, product_supplier_id, product_type, product_image) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
-                    $stmt->bind_param('siiddiss', $name, $categoryId, $stockInt, $costVal, $priceVal, $supplierId, $productType, $newImagePath);
+                    $stmt = $conn->prepare('INSERT INTO products (product_name, product_category_id, product_stocks, product_stocks_reference, product_cost, product_selling_price, product_supplier_id, product_type, product_image) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+                    $stmt->bind_param('siiiddiss', $name, $categoryId, $stockInt, $stockInt, $costVal, $priceVal, $supplierId, $productType, $newImagePath);
                     $stmt->execute();
                     $newProductId = (int)$stmt->insert_id;
                     $stmt->close();
 
                     save_product_recipe($conn, $newProductId, $productType, $_POST['ingredient_id'] ?? [], $_POST['ingredient_qty'] ?? [], $_POST['ingredient_unit'] ?? [], $_POST['ingredient_is_choice'] ?? []);
+                    save_product_variants($conn, $newProductId, $_POST['variant_name'] ?? [], $_POST['variant_price'] ?? []);
                     $msg = 'Product added.';
                 } else {
                     $productId = (int)($_POST['product_id'] ?? 0);
@@ -261,19 +290,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $oldImage = $oldStmt->get_result()->fetch_assoc()['product_image'] ?? null;
                         $oldStmt->close();
 
-                        $stmt = $conn->prepare('UPDATE products SET product_name = ?, product_category_id = ?, product_stocks = ?, product_cost = ?, product_selling_price = ?, product_supplier_id = ?, product_type = ?, product_image = ? WHERE product_id = ?');
-                        $stmt->bind_param('siiddissi', $name, $categoryId, $stockInt, $costVal, $priceVal, $supplierId, $productType, $newImagePath, $productId);
+                        $stmt = $conn->prepare('UPDATE products SET product_name = ?, product_category_id = ?, product_stocks = ?, product_stocks_reference = ?, product_cost = ?, product_selling_price = ?, product_supplier_id = ?, product_type = ?, product_image = ? WHERE product_id = ?');
+                        $stmt->bind_param('siiiddissi', $name, $categoryId, $stockInt, $stockInt, $costVal, $priceVal, $supplierId, $productType, $newImagePath, $productId);
                         $stmt->execute();
                         $stmt->close();
                         delete_product_image_file($oldImage);
                     } else {
-                        $stmt = $conn->prepare('UPDATE products SET product_name = ?, product_category_id = ?, product_stocks = ?, product_cost = ?, product_selling_price = ?, product_supplier_id = ?, product_type = ? WHERE product_id = ?');
-                        $stmt->bind_param('siiddisi', $name, $categoryId, $stockInt, $costVal, $priceVal, $supplierId, $productType, $productId);
+                        $stmt = $conn->prepare('UPDATE products SET product_name = ?, product_category_id = ?, product_stocks = ?, product_stocks_reference = ?, product_cost = ?, product_selling_price = ?, product_supplier_id = ?, product_type = ? WHERE product_id = ?');
+                        $stmt->bind_param('siiiddisi', $name, $categoryId, $stockInt, $stockInt, $costVal, $priceVal, $supplierId, $productType, $productId);
                         $stmt->execute();
                         $stmt->close();
                     }
 
                     save_product_recipe($conn, $productId, $productType, $_POST['ingredient_id'] ?? [], $_POST['ingredient_qty'] ?? [], $_POST['ingredient_unit'] ?? [], $_POST['ingredient_is_choice'] ?? []);
+                    save_product_variants($conn, $productId, $_POST['variant_name'] ?? [], $_POST['variant_price'] ?? []);
                     $msg = 'Product updated.';
                 }
             } catch (Throwable $e) {
@@ -476,13 +506,26 @@ $msg = $_GET['msg'] ?? '';
 $msgType = $_GET['type'] ?? 'success';
 
 $settings = get_system_settings($conn);
-$criticalStockThreshold = (int)$settings['critical_stock_threshold'];
-$lowStockThreshold = (int)$settings['low_stock_threshold'];
+$criticalStockThreshold = (float)$settings['critical_stock_threshold'];
+$lowStockThreshold = (float)$settings['low_stock_threshold'];
 
-function stock_level(int $stock, int $critical, int $low): string
+// Feeds the "Inventory" nav-badge — ingredients at critical or low stock.
+$stmt = $conn->prepare("SELECT COUNT(*) AS cnt FROM product_ingredients WHERE (ingredient_stock_reference IS NULL AND ingredient_stock <= 0) OR (ingredient_stock_reference > 0 AND (ingredient_stock / ingredient_stock_reference) * 100 <= ?)");
+$stmt->bind_param('d', $lowStockThreshold);
+$stmt->execute();
+$ingredientAlertCount = (int)$stmt->get_result()->fetch_assoc()['cnt'];
+$stmt->close();
+
+// Critical/Low are percentages of product_stocks_reference — the stock count last typed into
+// the Add/Edit form, which becomes the new "100%" mark every time stock is manually set/restocked.
+function stock_level(int $stock, ?int $reference, float $criticalPct, float $lowPct): string
 {
-    if ($stock <= $critical) return 'crit';
-    if ($stock <= $low) return 'low';
+    if ($reference === null || $reference <= 0) {
+        return $stock <= 0 ? 'crit' : 'ok';
+    }
+    $pct = ($stock / $reference) * 100;
+    if ($pct <= $criticalPct) return 'crit';
+    if ($pct <= $lowPct) return 'low';
     return 'ok';
 }
 
@@ -552,7 +595,7 @@ while ($row = $variantResult->fetch_assoc()) {
 
 $products = [];
 $prodResult = $conn->query('
-    SELECT p.product_id, p.product_name, p.product_stocks, p.product_cost, p.product_selling_price,
+    SELECT p.product_id, p.product_name, p.product_stocks, p.product_stocks_reference, p.product_cost, p.product_selling_price,
            p.product_category_id, pc.product_category, p.product_image, p.product_type, s.supplier_name, s.supplier_contact
     FROM products p
     JOIN product_category pc ON pc.product_category_id = p.product_category_id
@@ -561,6 +604,7 @@ $prodResult = $conn->query('
 ');
 while ($row = $prodResult->fetch_assoc()) {
     $stock = (int)$row['product_stocks'];
+    $reference = $row['product_stocks_reference'] !== null ? (int)$row['product_stocks_reference'] : null;
     $pid = (int)$row['product_id'];
     $products[] = [
         'id' => $pid,
@@ -570,7 +614,7 @@ while ($row = $prodResult->fetch_assoc()) {
         'tag_class' => category_tag_class($row['product_category']),
         'type' => $row['product_type'],
         'stock' => $stock,
-        'level' => stock_level($stock, $criticalStockThreshold, $lowStockThreshold),
+        'level' => stock_level($stock, $reference, $criticalStockThreshold, $lowStockThreshold),
         'cost' => (float)$row['product_cost'],
         'price' => (float)$row['product_selling_price'],
         'image' => $row['product_image'] ? '../' . $row['product_image'] : null,
@@ -819,14 +863,19 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
   <div class="sidebar-section-label">Owner Panel</div>
   <a href="dashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
   <a href="transactions.php" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
+  <a href="transaction_history.php" class="nav-item"><i class="fas fa-clock-rotate-left"></i> Transaction History</a>
   <a href="products.php" class="nav-item active"><i class="fas fa-boxes-stacked"></i> Products</a>
-  <a href="inventory.php" class="nav-item"><i class="fas fa-warehouse"></i> Inventory</a>
+  <a href="inventory.php" class="nav-item"><i class="fas fa-warehouse"></i> Inventory
+    <?php if ($ingredientAlertCount > 0): ?>
+      <span class="nav-badge"><?= $ingredientAlertCount ?></span>
+    <?php endif; ?>
+  </a>
   <a href="reports.php" class="nav-item"><i class="fas fa-chart-bar"></i> Sales Report</a>
   <a href="users.php" class="nav-item"><i class="fas fa-users-gear"></i> User Management</a>
   <hr class="sidebar-divider"/>
   <div class="sidebar-section-label">Settings</div>
   <a href="settings.php" class="nav-item"><i class="fas fa-gear"></i> System Settings</a>
-  <div class="nav-item" onclick="showToast('Backup started!','success')"><i class="fas fa-database"></i> Data Backup</div>
+  <a href="backup.php" class="nav-item"><i class="fas fa-database"></i> Data Backup</a>
 </nav>
 
 <div id="main">
@@ -875,9 +924,17 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
   <div class="modal-box">
     <div class="modal-title"><i class="fas fa-plus-circle" style="color:var(--gold);margin-right:8px;"></i>Add New Product</div>
     <div class="modal-sub">Fill in product details to add to the product catalog.</div>
-    <form method="POST" action="products.php" enctype="multipart/form-data">
+    <form method="POST" action="products.php" enctype="multipart/form-data" onsubmit="return checkDuplicateAndConfirm(event, this.elements['name'].value, products.map(p => p.name), 'product')">
       <input type="hidden" name="action" value="add">
-      <div class="modal-field"><label>Product Name</label><input type="text" name="name" placeholder="e.g. Caramel Macchiato" required /></div>
+      <div class="modal-field">
+        <label>Product Name</label>
+        <input type="text" name="name" placeholder="e.g. Caramel Macchiato" list="product-name-list" autocomplete="off" required />
+        <datalist id="product-name-list">
+          <?php foreach ($products as $p): ?>
+            <option value="<?= htmlspecialchars($p['name']) ?>"></option>
+          <?php endforeach; ?>
+        </datalist>
+      </div>
       <div class="modal-field"><label>Product Image</label><input type="file" name="product_image" accept="image/*" /></div>
       <div class="modal-field">
         <label>Product Type</label>
@@ -897,9 +954,12 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
         </select>
       </div>
       <div class="modal-field"><label>Selling Price (₱)</label><input type="number" name="price" min="0" step="0.01" placeholder="0.00" required /></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-        <div class="modal-field"><label>Stock Quantity</label><input type="number" name="stock" min="0" placeholder="0" required /></div>
-        <div class="modal-field"><label>Unit Cost (₱)</label><input type="number" name="cost" min="0" step="0.01" placeholder="0.00" required /></div>
+      <div class="modal-field"><label>Unit Cost (₱)</label><input type="number" name="cost" min="0" step="0.01" placeholder="0.00" required /></div>
+
+      <div class="modal-field">
+        <label>Sizes / Options <span style="text-transform:none;font-weight:400;">(optional — leave empty for a single-price product)</span></label>
+        <div id="add-variant-rows"></div>
+        <button type="button" class="btn-outline" style="margin-top:6px;" onclick="addVariantRow('add-variant-rows')"><i class="fas fa-plus"></i> Add Size</button>
       </div>
 
       <div id="add-madetoorder-fields" style="display:none;">
@@ -911,6 +971,7 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
       </div>
 
       <div id="add-prepared-fields" style="display:none;">
+        <div class="modal-field"><label>Stock Quantity</label><input type="number" name="stock" min="0" placeholder="0" /></div>
         <div class="modal-field"><label>Supplier Name</label><input type="text" name="supplier_name" placeholder="Supplier company"  /></div>
         <div class="modal-field"><label>Supplier Contact</label><input type="text" name="supplier_contact" placeholder="09XX-XXX-XXXX"  /></div>
       </div>
@@ -943,9 +1004,17 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
       <?php endif; ?>
     </div>
 
-    <form method="POST" action="products.php" style="border-top:1px solid var(--cream-dark);padding-top:14px;" onsubmit="return confirmSubmit(event, 'Add category &quot;' + this.category_name.value.trim() + '&quot;?', 'Add Category')">
+    <form method="POST" action="products.php" style="border-top:1px solid var(--cream-dark);padding-top:14px;" onsubmit="return checkDuplicateAndConfirm(event, this.category_name.value, Array.from(document.querySelectorAll('#category-name-list option')).map(o => o.value), 'category')">
       <input type="hidden" name="action" value="add_category">
-      <div class="modal-field"><label>New Category Name</label><input type="text" name="category_name" placeholder="e.g. Pastries" required /></div>
+      <div class="modal-field">
+        <label>New Category Name</label>
+        <input type="text" name="category_name" placeholder="e.g. Pastries" list="category-name-list" autocomplete="off" required />
+        <datalist id="category-name-list">
+          <?php foreach ($categories as $cat): ?>
+            <option value="<?= htmlspecialchars($cat['product_category']) ?>"></option>
+          <?php endforeach; ?>
+        </datalist>
+      </div>
       <button type="submit" class="btn-modal-primary"><i class="fas fa-plus" style="margin-right:6px;"></i>Add Category</button>
     </form>
     <button type="button" class="btn-modal-cancel" onclick="closeModal('modal-add-category')">Close</button>
@@ -985,9 +1054,12 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
         </select>
       </div>
       <div class="modal-field"><label>Selling Price (₱)</label><input type="number" name="price" id="edit-price" min="0" step="0.01" required /></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
-        <div class="modal-field"><label>Stock Quantity</label><input type="number" name="stock" id="edit-stock" min="0" required /></div>
-        <div class="modal-field"><label>Unit Cost (₱)</label><input type="number" name="cost" id="edit-cost" min="0" step="0.01" required /></div>
+      <div class="modal-field"><label>Unit Cost (₱)</label><input type="number" name="cost" id="edit-cost" min="0" step="0.01" required /></div>
+
+      <div class="modal-field">
+        <label>Sizes / Options <span style="text-transform:none;font-weight:400;">(optional — leave empty for a single-price product)</span></label>
+        <div id="edit-variant-rows"></div>
+        <button type="button" class="btn-outline" style="margin-top:6px;" onclick="addVariantRow('edit-variant-rows')"><i class="fas fa-plus"></i> Add Size</button>
       </div>
 
       <div id="edit-madetoorder-fields" style="display:none;">
@@ -999,6 +1071,7 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
       </div>
 
       <div id="edit-prepared-fields" style="display:none;">
+        <div class="modal-field"><label>Stock Quantity</label><input type="number" name="stock" id="edit-stock" min="0" /></div>
         <div class="modal-field"><label>Supplier Name</label><input type="text" name="supplier_name" id="edit-supplier-name" /></div>
         <div class="modal-field"><label>Supplier Contact</label><input type="text" name="supplier_contact" id="edit-supplier-contact" /></div>
       </div>
@@ -1175,6 +1248,24 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
     container.appendChild(row);
   }
 
+  function addVariantRow(containerId, name = '', price = '') {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px;';
+    const nameInput = document.createElement('input');
+    nameInput.type = 'text'; nameInput.name = 'variant_name[]'; nameInput.placeholder = 'e.g. Small, Hot'; nameInput.value = name;
+    nameInput.style.cssText = 'flex:2;padding:9px 13px;border-radius:8px;border:1.5px solid var(--cream-dark);background:var(--cream);font-family:var(--font-body);font-size:13px;color:var(--charcoal);';
+    const priceInput = document.createElement('input');
+    priceInput.type = 'number'; priceInput.name = 'variant_price[]'; priceInput.min = '0'; priceInput.step = '0.01'; priceInput.placeholder = 'Price'; priceInput.value = price;
+    priceInput.style.cssText = 'flex:1;padding:9px 13px;border-radius:8px;border:1.5px solid var(--cream-dark);background:var(--cream);font-family:var(--font-body);font-size:13px;color:var(--charcoal);';
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button'; removeBtn.className = 'tbl-btn tbl-btn-del'; removeBtn.textContent = '✕';
+    removeBtn.onclick = () => row.remove();
+    row.append(nameInput, priceInput, removeBtn);
+    container.appendChild(row);
+  }
+
   function money(n) {
     return '₱' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
@@ -1207,7 +1298,7 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
         <td>${p.image ? `<img src="${p.image}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:6px;">` : `<div style="width:40px;height:40px;border-radius:6px;background:var(--cream-dark);"></div>`}</td>
         <td style="font-weight:600;">${p.name}${isMotd ? ' <span class="tag tag-supply" style="margin-left:4px;">Made to Order</span>' : ''}</td>
         <td><span class="tag ${p.tag_class}">${p.category_name}</span></td>
-        <td><div class="stock-indicator stock-${p.level}"><div class="stock-dot"></div>${p.stock}</div></td>
+        <td>${isMotd ? '<span class="text-muted">—</span>' : `<div class="stock-indicator stock-${p.level}"><div class="stock-dot"></div>${p.stock}</div>`}</td>
         <td class="text-mono">${money(p.cost)}</td>
         <td class="text-mono">${money(p.price)}</td>
         <td style="display:flex;gap:6px;align-items:center;">
@@ -1245,7 +1336,7 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
     typeSelect.value = p.type;
     toggleProductTypeFields(typeSelect, 'edit-prepared-fields', 'edit-madetoorder-fields');
 
-    document.getElementById('edit-stock').value = p.stock;
+    document.getElementById('edit-stock').value = p.type === 'prepared' ? p.stock : '';
     document.getElementById('edit-cost').value = p.cost;
     document.getElementById('edit-supplier-name').value = p.type === 'prepared' ? p.supplier_name : '';
     document.getElementById('edit-supplier-contact').value = p.type === 'prepared' ? p.supplier_contact : '';
@@ -1253,6 +1344,10 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
     const ingredientRows = document.getElementById('edit-ingredient-rows');
     ingredientRows.innerHTML = '';
     (p.recipe || []).forEach(r => addIngredientRow('edit-ingredient-rows', r.ingredient_id, r.quantity, r.unit, r.is_choice));
+
+    const variantRows = document.getElementById('edit-variant-rows');
+    variantRows.innerHTML = '';
+    (p.variants || []).forEach(v => addVariantRow('edit-variant-rows', v.name, v.price));
 
     const preview = document.getElementById('edit-current-image');
     if (p.image) {
@@ -1383,6 +1478,64 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
     closeModal('modal-confirm-delete');
     if (pendingConfirmForm) { pendingConfirmForm.submit(); pendingConfirmForm = null; }
   });
+
+  // Warns before inserting a product/category/ingredient that looks like it might already
+  // exist (typo, different casing, or a near-identical name) — a cheap Levenshtein-distance
+  // check against everything already in the list, no external library needed.
+  function normalizeText(s) {
+    return (s || '').toLowerCase().trim().replace(/\s+/g, ' ');
+  }
+  // Character bigrams with whitespace stripped — order/spacing-independent, so "ground pork"
+  // and "porkground" still overlap almost completely even though the words are swapped and
+  // the space is gone; only the bigram at the word "seam" changes.
+  function bigrams(s) {
+    const flat = s.replace(/\s+/g, '');
+    const grams = [];
+    for (let i = 0; i < flat.length - 1; i++) grams.push(flat.slice(i, i + 2));
+    return grams;
+  }
+  // Sørensen–Dice coefficient: 2 * shared bigrams / total bigrams — 0 (nothing alike) to 1 (identical).
+  function diceCoefficient(a, b) {
+    const gramsA = bigrams(a), gramsB = bigrams(b);
+    if (gramsA.length === 0 || gramsB.length === 0) return gramsA.join('') === gramsB.join('') ? 1 : 0;
+    const counts = new Map();
+    for (const g of gramsA) counts.set(g, (counts.get(g) || 0) + 1);
+    let shared = 0;
+    for (const g of gramsB) {
+      const c = counts.get(g) || 0;
+      if (c > 0) { shared++; counts.set(g, c - 1); }
+    }
+    return (2 * shared) / (gramsA.length + gramsB.length);
+  }
+  const SIMILARITY_THRESHOLD = 0.7;
+  // Returns the existing name this looks like a near-duplicate of, or null if it looks distinct.
+  function findSimilarExisting(newName, existingNames) {
+    const norm = normalizeText(newName);
+    if (!norm) return null;
+    for (const existing of existingNames) {
+      const existingNorm = normalizeText(existing);
+      if (!existingNorm) continue;
+      if (existingNorm === norm) return existing;
+      if (norm.length >= 4 && existingNorm.length >= 4) {
+        if (existingNorm.includes(norm) || norm.includes(existingNorm)) return existing;
+        if (diceCoefficient(norm, existingNorm) >= SIMILARITY_THRESHOLD) return existing;
+      }
+    }
+    return null;
+  }
+  function checkDuplicateAndConfirm(event, newName, existingNames, itemType) {
+    const match = findSimilarExisting(newName, existingNames);
+    if (!match) return true;
+    event.preventDefault();
+    pendingConfirmForm = event.target;
+    document.getElementById('confirm-delete-message').textContent =
+      `Are you sure you want to add this ${itemType}? It seems "${match}" is already inserted inside.`;
+    const yesBtn = document.getElementById('confirm-delete-yes');
+    yesBtn.textContent = 'Add Anyway';
+    yesBtn.style.background = 'var(--mocha)';
+    openModal('modal-confirm-delete');
+    return false;
+  }
 
   function showToast(msg, type = 'success') {
     const c = document.getElementById('toast-container');

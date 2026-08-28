@@ -1,6 +1,7 @@
 <?php
 session_start();
 require_once __DIR__ . '/../db_connect.php';
+require_once __DIR__ . '/../settings_helper.php';
 
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'cafe owner') {
     header('Location: ../signin.php');
@@ -111,6 +112,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 $msg = $_GET['msg'] ?? '';
 $msgType = $_GET['type'] ?? 'success';
+
+// Feeds the "Inventory" nav-badge — ingredients at critical or low stock.
+$navSettings = get_system_settings($conn);
+$navLowStockThreshold = (float)$navSettings['low_stock_threshold'];
+$stmt = $conn->prepare("SELECT COUNT(*) AS cnt FROM product_ingredients WHERE (ingredient_stock_reference IS NULL AND ingredient_stock <= 0) OR (ingredient_stock_reference > 0 AND (ingredient_stock / ingredient_stock_reference) * 100 <= ?)");
+$stmt->bind_param('d', $navLowStockThreshold);
+$stmt->execute();
+$ingredientAlertCount = (int)$stmt->get_result()->fetch_assoc()['cnt'];
+$stmt->close();
 
 $displayName = $_SESSION['username'] ?? 'Owner';
 $initials = strtoupper(substr($displayName, 0, 2));
@@ -1200,16 +1210,21 @@ while ($row = $result->fetch_assoc()) {
     <div class="sidebar-section-label">Owner Panel</div>
     <a href="dashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
     <a href="transactions.php" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
+    <a href="transaction_history.php" class="nav-item"><i class="fas fa-clock-rotate-left"></i> Transaction History</a>
     <a href="products.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Products</a>
-    <a href="inventory.php" class="nav-item"><i class="fas fa-warehouse"></i> Inventory</a>
+    <a href="inventory.php" class="nav-item"><i class="fas fa-warehouse"></i> Inventory
+      <?php if ($ingredientAlertCount > 0): ?>
+        <span class="nav-badge"><?= $ingredientAlertCount ?></span>
+      <?php endif; ?>
+    </a>
     <a href="reports.php" class="nav-item"><i class="fas fa-chart-bar"></i> Sales Report</a>
     <a href="users.php" class="nav-item active"><i class="fas fa-users-gear"></i> User Management</a>
     <hr class="sidebar-divider" />
     <div class="sidebar-section-label">Settings</div>
     <a href="settings.php" class="nav-item"><i class="fas fa-gear"></i> System
       Settings</a>
-    <div class="nav-item" onclick="showToast('Backup started!','success')"><i class="fas fa-database"></i> Data Backup
-    </div>
+    <a href="backup.php" class="nav-item"><i class="fas fa-database"></i> Data Backup
+    </a>
   </nav>
 
   <div id="main">
