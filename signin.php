@@ -1,13 +1,15 @@
 <?php
 session_start();
 require_once __DIR__ . '/db_connect.php';
+require_once __DIR__ . '/settings_helper.php';
 
+$settings = get_system_settings($conn);
 $error = '';
 $username = '';
 $successMessage = '';
 
-if (isset($_GET['signup']) && $_GET['signup'] === 'success') {
-    $successMessage = 'Admin account created successfully. You can now sign in.';
+if (isset($_GET['recovered']) && $_GET['recovered'] === '1') {
+    $successMessage = 'Password reset successfully. You can now sign in with your new password.';
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -302,23 +304,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             font-size: 13px;
         }
 
-        .create-account {
-            text-align: center;
-            margin-top: 24px;
-            padding-top: 20px;
-            border-top: 1px solid var(--cream-dark);
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 9999;
+            background: rgba(20, 10, 8, .58);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(4px);
+            padding: 20px;
         }
 
-        .create-link {
-            font-size: 14px;
-            font-weight: 600;
-            color: var(--gold);
-            text-decoration: none;
+        .modal-overlay.show {
+            display: flex;
         }
 
-        .create-link:hover {
-            color: var(--gold-light);
-            text-decoration: underline;
+        .modal-box {
+            background: var(--cream-light);
+            border-radius: var(--radius-lg);
+            padding: 28px 30px;
+            max-width: 400px;
+            width: 100%;
+            box-shadow: var(--shadow-lg);
+            animation: popIn .25s cubic-bezier(.34, 1.56, .64, 1);
+        }
+
+        @keyframes popIn {
+            from { opacity: 0; transform: scale(.88); }
+            to { opacity: 1; transform: scale(1); }
+        }
+
+        .modal-title {
+            font-family: var(--font-display);
+            font-size: 19px;
+            font-weight: 700;
+            color: var(--mocha-deep);
+            margin-bottom: 10px;
         }
 
         @media (max-width: 480px) {
@@ -390,19 +412,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </form>
 
         <div class="links-row">
-            <a href="#" class="link">Forgot Password?</a>
-            <a href="#" class="link">Need Help?</a>
-        </div>
-
-        <div class="create-account">
-            <p style="color: var(--charcoal-mid); font-size: 14px; margin-bottom: 8px;">
-                Don't have an account?
-            </p>
-            <a href="signup.php" class="create-link">
-                Create Admin Account
-            </a>
+            <a href="#" class="link" onclick="openHelpModal('forgot'); return false;">Forgot Password?</a>
+            <a href="#" class="link" onclick="openHelpModal('help'); return false;">Need Help?</a>
         </div>
     </main>
+
+    <div class="modal-overlay" id="help-modal">
+        <div class="modal-box">
+            <h2 class="modal-title" id="help-modal-title"></h2>
+            <p id="help-modal-message" style="font-size:14px;color:var(--charcoal-mid);line-height:1.6;margin-bottom:16px;"></p>
+            <?php if ($settings['cafe_contact'] !== '' || $settings['cafe_address'] !== ''): ?>
+            <div style="background:var(--cream);border:1px dashed var(--cream-dark);border-radius:var(--radius);padding:12px 16px;margin-bottom:8px;">
+                <?php if ($settings['cafe_contact'] !== ''): ?>
+                <div style="font-size:13.5px;color:var(--mocha-deep);font-weight:600;"><i class="fas fa-phone" style="margin-right:8px;color:var(--gold);"></i><?= htmlspecialchars($settings['cafe_contact']) ?></div>
+                <?php endif; ?>
+                <?php if ($settings['cafe_address'] !== ''): ?>
+                <div style="font-size:13.5px;color:var(--mocha-deep);font-weight:600;margin-top:<?= $settings['cafe_contact'] !== '' ? '6px' : '0' ?>;"><i class="fas fa-location-dot" style="margin-right:8px;color:var(--gold);"></i><?= htmlspecialchars($settings['cafe_address']) ?></div>
+                <?php endif; ?>
+            </div>
+            <?php endif; ?>
+            <a href="recover_account.php" class="link" id="help-modal-recover-link" style="display:none;text-align:center;font-weight:600;margin-top:4px;">
+                <i class="fas fa-user-shield" style="margin-right:6px;"></i>Are you the owner? Recover your account →
+            </a>
+            <button type="button" class="signin-btn" style="margin-top:16px;" onclick="closeHelpModal()">Close</button>
+        </div>
+    </div>
+
+    <script>
+        // Password resets and account help are both handled by the café owner/admin directly
+        // (no email/SMTP setup exists in this app, and the owner can already reset any user's
+        // password from User Management) — so both links open the same modal with different copy.
+        function openHelpModal(type) {
+            const title = document.getElementById('help-modal-title');
+            const message = document.getElementById('help-modal-message');
+            const recoverLink = document.getElementById('help-modal-recover-link');
+            if (type === 'forgot') {
+                title.textContent = 'Forgot Your Password?';
+                message.textContent = 'Staff: the café owner/administrator resets your password directly from User Management — please reach out to them using the details below. Owner: if you set up security questions in Settings, you can recover this account yourself.';
+                recoverLink.style.display = 'block';
+            } else {
+                title.textContent = 'Need Help?';
+                message.textContent = 'Having trouble signing in or using SmartStock? Contact the café owner/administrator using the details below.';
+                recoverLink.style.display = 'none';
+            }
+            document.getElementById('help-modal').classList.add('show');
+        }
+        function closeHelpModal() {
+            document.getElementById('help-modal').classList.remove('show');
+        }
+        document.getElementById('help-modal').addEventListener('click', e => {
+            if (e.target.id === 'help-modal') closeHelpModal();
+        });
+    </script>
 </body>
 
 </html>

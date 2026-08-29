@@ -52,6 +52,57 @@ function delete_settings_image_file(?string $relativePath): void
     }
 }
 
+// Preset options for the "Account Recovery" security-question picker below — the owner can also
+// type a fully custom question via the <select>'s "Write your own…" option.
+const SECURITY_QUESTION_PRESETS = [
+    "What was the name of your first pet?",
+    "What is your mother's maiden name?",
+    "What city were you born in?",
+    "What was the name of your first school?",
+    "What was your childhood nickname?",
+    "What street did you grow up on?",
+    "What was the name of your first café or business?",
+];
+
+// Answers are compared case/whitespace-insensitively — the owner shouldn't get locked out over
+// "Manila" vs "manila " months later.
+function normalize_security_answer(string $answer): string
+{
+    return mb_strtolower(trim($answer));
+}
+
+// Separate action from the main café-settings save below — this updates the logged-in owner's own
+// users row, not the shared system_settings table, so it gets its own form and its own handler.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_security_questions') {
+    $ownerId = (int)$_SESSION['user_id'];
+    $q1 = trim($_POST['security_question_1'] ?? '');
+    $a1 = trim($_POST['security_answer_1'] ?? '');
+    $q2 = trim($_POST['security_question_2'] ?? '');
+    $a2 = trim($_POST['security_answer_2'] ?? '');
+
+    $msg = '';
+    $msgType = 'success';
+
+    if ($q1 === '' || $a1 === '' || $q2 === '' || $a2 === '') {
+        $msg = 'Please fill in both security questions and their answers.';
+        $msgType = 'warn';
+    } elseif ($q1 === $q2) {
+        $msg = 'Please choose two different security questions.';
+        $msgType = 'warn';
+    } else {
+        $hash1 = password_hash(normalize_security_answer($a1), PASSWORD_DEFAULT);
+        $hash2 = password_hash(normalize_security_answer($a2), PASSWORD_DEFAULT);
+        $stmt = $conn->prepare('UPDATE users SET security_question_1 = ?, security_answer_1_hash = ?, security_question_2 = ?, security_answer_2_hash = ? WHERE user_id = ?');
+        $stmt->bind_param('ssssi', $q1, $hash1, $q2, $hash2, $ownerId);
+        $stmt->execute();
+        $stmt->close();
+        $msg = 'Account recovery questions saved.';
+    }
+
+    header('Location: settings.php?msg=' . urlencode($msg) . '&type=' . urlencode($msgType));
+    exit;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $settingsBefore = get_system_settings($conn);
     $removeQrImage = !empty($_POST['remove_ewallet_qr_image']);
@@ -137,6 +188,14 @@ $initials = strtoupper(substr($displayName, 0, 2));
 $settings = get_system_settings($conn);
 $taxRatePercentDisplay = rtrim(rtrim(number_format((float)$settings['tax_rate'] * 100, 2, '.', ''), '0'), '.');
 $discountRatePercentDisplay = rtrim(rtrim(number_format((float)$settings['discount_rate'] * 100, 2, '.', ''), '0'), '.');
+
+$ownerId = (int)$_SESSION['user_id'];
+$stmt = $conn->prepare('SELECT security_question_1, security_question_2 FROM users WHERE user_id = ?');
+$stmt->bind_param('i', $ownerId);
+$stmt->execute();
+$ownerSecurityRow = $stmt->get_result()->fetch_assoc();
+$stmt->close();
+$hasSecurityQuestions = !empty($ownerSecurityRow['security_question_1']) && !empty($ownerSecurityRow['security_question_2']);
 
 // Feeds the "Inventory" nav-badge — ingredients at critical OR low stock (not products).
 $lowThresholdFloat = (float)$settings['low_stock_threshold'];
@@ -302,12 +361,13 @@ $stmt->close();
     .settings-field { margin-bottom: 16px; }
     .settings-field:last-child { margin-bottom: 0; }
     .settings-field label { display:block; font-size:11px; font-weight:700; letter-spacing:.6px; text-transform:uppercase; color:#888; margin-bottom:6px; }
-    .settings-field input, .settings-field textarea {
+    .settings-field input, .settings-field textarea, .settings-field select {
       width:100%; padding:11px 14px; border-radius:8px; border:1.5px solid var(--cream-dark);
       background:var(--cream-light); font-family:var(--font-body); font-size:13.5px; color:var(--charcoal);
       outline:none; transition:border-color .2s;
     }
-    .settings-field input:focus, .settings-field textarea:focus { border-color: var(--mocha); }
+    .settings-field input:focus, .settings-field textarea:focus, .settings-field select:focus { border-color: var(--mocha); }
+    .security-question-custom { display: none; margin-top: 8px; }
     .settings-field .hint { font-size: 11px; color: #999; margin-top: 5px; }
     .settings-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 
@@ -461,6 +521,63 @@ $stmt->close();
       <button type="submit" class="btn-primary"><i class="fas fa-check"></i> Save Settings</button>
     </div>
   </form>
+
+  <form method="POST" action="settings.php" style="padding:0 26px 22px;" onsubmit="return validateSecurityQuestionsForm(this);">
+    <input type="hidden" name="action" value="save_security_questions">
+    <div class="settings-grid">
+      <div class="settings-card" style="grid-column:1/-1;">
+        <div class="settings-card-title"><i class="fas fa-key"></i>Account Recovery</div>
+        <div class="settings-card-sub">
+          <?php if ($hasSecurityQuestions): ?>
+            Security questions are set up for your owner login (<strong><?= htmlspecialchars($displayName) ?></strong>). Saving again replaces both questions and answers.
+          <?php else: ?>
+            <strong>Not set up yet.</strong> If you ever forget this account's password, there's no one above the owner role to reset it for you — these questions are the only way back in. Set them up now, while you still have access.
+          <?php endif; ?>
+        </div>
+        <div class="settings-field-row">
+          <div class="settings-field">
+            <label>Security Question 1</label>
+            <select class="security-question-select" onchange="toggleCustomQuestion(this)" required>
+              <option value="">Choose a question…</option>
+              <?php foreach (SECURITY_QUESTION_PRESETS as $preset): ?>
+                <option value="<?= htmlspecialchars($preset) ?>"<?= ($ownerSecurityRow['security_question_1'] ?? '') === $preset ? ' selected' : '' ?>><?= htmlspecialchars($preset) ?></option>
+              <?php endforeach; ?>
+              <option value="__custom__"<?= (!empty($ownerSecurityRow['security_question_1']) && !in_array($ownerSecurityRow['security_question_1'], SECURITY_QUESTION_PRESETS, true)) ? ' selected' : '' ?>>Write your own…</option>
+            </select>
+            <div class="security-question-custom">
+              <input type="text" class="security-question-custom-input" placeholder="Type your own question" maxlength="255" value="<?= (!empty($ownerSecurityRow['security_question_1']) && !in_array($ownerSecurityRow['security_question_1'], SECURITY_QUESTION_PRESETS, true)) ? htmlspecialchars($ownerSecurityRow['security_question_1']) : '' ?>">
+            </div>
+            <input type="hidden" name="security_question_1" class="security-question-hidden">
+          </div>
+          <div class="settings-field">
+            <label>Answer 1</label>
+            <input type="text" name="security_answer_1" placeholder="Answer (not case-sensitive)" autocomplete="off">
+          </div>
+        </div>
+        <div class="settings-field-row">
+          <div class="settings-field">
+            <label>Security Question 2</label>
+            <select class="security-question-select" onchange="toggleCustomQuestion(this)" required>
+              <option value="">Choose a question…</option>
+              <?php foreach (SECURITY_QUESTION_PRESETS as $preset): ?>
+                <option value="<?= htmlspecialchars($preset) ?>"<?= ($ownerSecurityRow['security_question_2'] ?? '') === $preset ? ' selected' : '' ?>><?= htmlspecialchars($preset) ?></option>
+              <?php endforeach; ?>
+              <option value="__custom__"<?= (!empty($ownerSecurityRow['security_question_2']) && !in_array($ownerSecurityRow['security_question_2'], SECURITY_QUESTION_PRESETS, true)) ? ' selected' : '' ?>>Write your own…</option>
+            </select>
+            <div class="security-question-custom">
+              <input type="text" class="security-question-custom-input" placeholder="Type your own question" maxlength="255" value="<?= (!empty($ownerSecurityRow['security_question_2']) && !in_array($ownerSecurityRow['security_question_2'], SECURITY_QUESTION_PRESETS, true)) ? htmlspecialchars($ownerSecurityRow['security_question_2']) : '' ?>">
+            </div>
+            <input type="hidden" name="security_question_2" class="security-question-hidden">
+          </div>
+          <div class="settings-field">
+            <label>Answer 2</label>
+            <input type="text" name="security_answer_2" placeholder="Answer (not case-sensitive)" autocomplete="off">
+          </div>
+        </div>
+        <button type="submit" class="btn-primary" style="margin-top:4px;"><i class="fas fa-shield-halved"></i> Save Recovery Questions</button>
+      </div>
+    </div>
+  </form>
 </div>
 
 <div id="toast-container"></div>
@@ -468,7 +585,39 @@ $stmt->close();
 <script>
   document.addEventListener('DOMContentLoaded', () => {
     updateClock(); setInterval(updateClock, 1000);
+    document.querySelectorAll('.security-question-select').forEach(toggleCustomQuestion);
   });
+
+  // Shows/hides the free-text box next to each security-question picker — "Write your own…"
+  // reveals it, any preset hides it, matching this app's usual toggle pattern elsewhere.
+  function toggleCustomQuestion(select) {
+    const customBox = select.closest('.settings-field').querySelector('.security-question-custom');
+    customBox.style.display = select.value === '__custom__' ? 'block' : 'none';
+  }
+
+  // The <select> is UI-only (its "Write your own…" option isn't a real question); this copies
+  // whichever text is actually intended — the preset or the custom box — into the hidden input
+  // that gets submitted, and blocks submit if either question ended up empty.
+  function validateSecurityQuestionsForm(form) {
+    const selects = form.querySelectorAll('.security-question-select');
+    for (const select of selects) {
+      const hidden = select.closest('.settings-field').querySelector('.security-question-hidden');
+      if (select.value === '__custom__') {
+        const customText = select.closest('.settings-field').querySelector('.security-question-custom-input').value.trim();
+        if (customText === '') {
+          showToast('Please type your custom security question.', 'warn');
+          return false;
+        }
+        hidden.value = customText;
+      } else if (select.value === '') {
+        showToast('Please choose both security questions.', 'warn');
+        return false;
+      } else {
+        hidden.value = select.value;
+      }
+    }
+    return true;
+  }
 
   function updateClock() {
     const clock = document.getElementById('clock');
