@@ -232,8 +232,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         $cashierUsername = $_SESSION['username'] ?? '';
         $notes = trim($_POST['notes'] ?? '');
         $notes = $notes !== '' ? $notes : null;
-        $insertTxn = $conn->prepare("INSERT INTO transactions (user_id, cashier_username, transaction_date, transaction_total, transaction_status, payment_method, discount, notes) VALUES (?, ?, NOW(), ?, 'completed', ?, ?, ?)");
-        $insertTxn->bind_param('isdsds', $userId, $cashierUsername, $finalTotal, $paymentMethod, $discountAmount, $notes);
+        // Snapshot of exactly what was deducted per ingredient, so a later cancellation can restore
+        // stock precisely even if the recipe (product_ingredient_items) has changed since this sale.
+        $ingredientUsageSnapshot = json_encode($ingredientNeeds);
+        $insertTxn = $conn->prepare("INSERT INTO transactions (user_id, cashier_username, transaction_date, transaction_total, transaction_status, payment_method, discount, notes, ingredient_usage_snapshot) VALUES (?, ?, NOW(), ?, 'completed', ?, ?, ?, ?)");
+        $insertTxn->bind_param('isdsdss', $userId, $cashierUsername, $finalTotal, $paymentMethod, $discountAmount, $notes, $ingredientUsageSnapshot);
         $insertTxn->execute();
         $transactionId = $insertTxn->insert_id;
         $insertTxn->close();
@@ -271,6 +274,73 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
             'total' => $finalTotal,
             'discount' => $discountAmount,
         ]);
+    } catch (Throwable $e) {
+        $conn->rollback();
+        echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+// Voids a completed sale: flips its status (Sales Report/Dashboard already filter to 'completed'
+// only, so this drops it out of revenue automatically) and restores the stock it consumed —
+// product_stocks for prepared items via transaction_items, ingredient_stock via the exact amounts
+// recorded in ingredient_usage_snapshot at sale time.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cancel_transaction') {
+    header('Content-Type: application/json');
+
+    $transactionId = (int)($_POST['transaction_id'] ?? 0);
+    if ($transactionId <= 0) {
+        echo json_encode(['success' => false, 'error' => 'Invalid transaction.']);
+        exit;
+    }
+
+    $conn->begin_transaction();
+    try {
+        $stmt = $conn->prepare("SELECT ingredient_usage_snapshot FROM transactions WHERE transaction_id = ? AND transaction_status = 'completed' FOR UPDATE");
+        $stmt->bind_param('i', $transactionId);
+        $stmt->execute();
+        $txnRow = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if (!$txnRow) {
+            throw new RuntimeException('Transaction not found or already cancelled.');
+        }
+
+        $update = $conn->prepare("UPDATE transactions SET transaction_status = 'cancelled' WHERE transaction_id = ? AND transaction_status = 'completed'");
+        $update->bind_param('i', $transactionId);
+        $update->execute();
+        if ($update->affected_rows === 0) {
+            throw new RuntimeException('Transaction not found or already cancelled.');
+        }
+        $update->close();
+
+        $itemsStmt = $conn->prepare('SELECT product_id, quantity FROM transaction_items WHERE transaction_id = ?');
+        $itemsStmt->bind_param('i', $transactionId);
+        $itemsStmt->execute();
+        $itemsResult = $itemsStmt->get_result();
+        $restoreStock = $conn->prepare("UPDATE products SET product_stocks = product_stocks + ? WHERE product_id = ? AND product_type = 'prepared'");
+        while ($item = $itemsResult->fetch_assoc()) {
+            if ($item['product_id'] === null) continue;
+            $restoreStock->bind_param('ii', $item['quantity'], $item['product_id']);
+            $restoreStock->execute();
+        }
+        $itemsStmt->close();
+        $restoreStock->close();
+
+        $usage = json_decode($txnRow['ingredient_usage_snapshot'] ?? '[]', true) ?: [];
+        if ($usage) {
+            $restoreIngredient = $conn->prepare('UPDATE product_ingredients SET ingredient_stock = ingredient_stock + ? WHERE product_ingredients_id = ?');
+            foreach ($usage as $ingredientId => $qty) {
+                $ingredientId = (int)$ingredientId;
+                $qty = (float)$qty;
+                if ($ingredientId <= 0 || $qty <= 0) continue;
+                $restoreIngredient->bind_param('di', $qty, $ingredientId);
+                $restoreIngredient->execute();
+            }
+            $restoreIngredient->close();
+        }
+
+        $conn->commit();
+        echo json_encode(['success' => true, 'transaction_id' => $transactionId]);
     } catch (Throwable $e) {
         $conn->rollback();
         echo json_encode(['success' => false, 'error' => $e->getMessage()]);
@@ -1539,7 +1609,7 @@ while ($row = $prodResult->fetch_assoc()) {
     <a href="backup.php" class="nav-item"><i class="fas fa-database"></i> Data Backup
     </a>
     <div class="sidebar-footer">
-      <p>SmartStock v1.0<br />Bean There Café</p>
+      <p>SmartStock v1.0<br />Bean There Café<br />ISO/IEC 25010 Compliant</p>
     </div>
   </nav>
 
@@ -1652,6 +1722,7 @@ while ($row = $prodResult->fetch_assoc()) {
             <button id="receipt-confirm-btn" class="btn-confirm" style="margin-top: 15px; width: 100%; display:none;" onclick="finalizeCheckout()">Confirm & Complete Sale</button>
             <button id="receipt-done-btn" class="btn-confirm" style="margin-top: 15px; width: 100%;" onclick="requestNewSale()">Done & New
               Sale</button>
+            <button id="receipt-cancel-sale-btn" class="btn-cancel" style="margin-top: 8px; width: 100%; display:none;" onclick="requestCancelThisSale()"><i class="fas fa-ban" style="margin-right:6px;"></i>Cancel This Sale</button>
           </div>
         </div>
       </div>
@@ -1661,6 +1732,14 @@ while ($row = $prodResult->fetch_assoc()) {
           <p style="font-size:13px;color:var(--charcoal-mid);margin-bottom:18px;">This will close the receipt and clear the cart for the next customer.</p>
           <button class="btn-confirm" style="width:100%;" onclick="confirmNewSale()">Yes, Start New Sale</button>
           <button class="btn-cancel" style="width:100%;margin-top:8px;" onclick="cancelNewSale()">Cancel</button>
+        </div>
+      </div>
+      <div id="modal-confirm-cancel-sale" class="modal-overlay">
+        <div class="modal-box" style="max-width:360px;">
+          <h2 class="modal-title">Cancel This Sale?</h2>
+          <p style="font-size:13px;color:var(--charcoal-mid);margin-bottom:18px;">This voids the transaction and restores the stock/ingredients it used. This cannot be undone.</p>
+          <button class="btn-confirm" style="width:100%;background:var(--red-soft);color:#fff;" onclick="confirmCancelThisSale()">Yes, Cancel Sale</button>
+          <button class="btn-cancel" style="width:100%;margin-top:8px;" onclick="closeCancelThisSaleModal()">No, Keep It</button>
         </div>
       </div>
       <div id="checkout-modal" class="modal-overlay">
@@ -1750,6 +1829,7 @@ while ($row = $prodResult->fetch_assoc()) {
           return html;
         }
         let cart = [];
+        let currentTransactionId = null;
         let currentCategory = 'all';
         const TAX_RATE = <?= (float)$settings['tax_rate'] ?>;
         const DISCOUNT_RATE = <?= (float)$settings['discount_rate'] ?>;
@@ -2187,6 +2267,8 @@ while ($row = $prodResult->fetch_assoc()) {
           document.getElementById('receipt-back-row').style.display = 'block';
           document.getElementById('receipt-confirm-btn').style.display = 'block';
           document.getElementById('receipt-done-btn').style.display = 'none';
+          document.getElementById('receipt-cancel-sale-btn').style.display = 'none';
+          currentTransactionId = null;
 
           closeCheckoutModal();
           document.getElementById('receipt-modal').classList.add('show');
@@ -2237,10 +2319,51 @@ while ($row = $prodResult->fetch_assoc()) {
             return;
           }
 
+          currentTransactionId = serverResult.transaction_id;
           document.getElementById('receipt-content').innerHTML = buildReceiptHtml(serverResult.transaction_id);
           document.getElementById('receipt-back-row').style.display = 'none';
           document.getElementById('receipt-confirm-btn').style.display = 'none';
           document.getElementById('receipt-done-btn').style.display = 'block';
+          document.getElementById('receipt-cancel-sale-btn').style.display = 'block';
+        }
+
+        // Lets the cashier immediately void a just-completed sale (e.g. wrong items rung up)
+        // without leaving this page — same cancel_transaction endpoint Transaction History uses.
+        function requestCancelThisSale() {
+          if (!currentTransactionId) return;
+          document.getElementById('modal-confirm-cancel-sale').classList.add('show');
+        }
+        function closeCancelThisSaleModal() {
+          document.getElementById('modal-confirm-cancel-sale').classList.remove('show');
+        }
+        async function confirmCancelThisSale() {
+          closeCancelThisSaleModal();
+          if (!currentTransactionId) return;
+          const btn = document.getElementById('receipt-cancel-sale-btn');
+          btn.disabled = true;
+          btn.textContent = 'Cancelling…';
+          try {
+            const res = await fetch('transactions.php', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: new URLSearchParams({ action: 'cancel_transaction', transaction_id: currentTransactionId })
+            });
+            const data = await res.json();
+            if (!data.success) {
+              showToast(data.error || 'Could not cancel this sale.', 'warn');
+              btn.disabled = false;
+              btn.innerHTML = '<i class="fas fa-ban" style="margin-right:6px;"></i>Cancel This Sale';
+              return;
+            }
+            showToast(`Transaction #${currentTransactionId} cancelled — stock restored.`, 'success');
+            btn.style.display = 'none';
+            document.getElementById('receipt-content').insertAdjacentHTML('afterbegin',
+              '<div style="text-align:center;font-weight:800;color:var(--red-soft);letter-spacing:1px;margin-bottom:10px;">CANCELLED</div>');
+          } catch (err) {
+            showToast('Could not reach the server. Please try again.', 'warn');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-ban" style="margin-right:6px;"></i>Cancel This Sale';
+          }
         }
 
         function requestNewSale() {

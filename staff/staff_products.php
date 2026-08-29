@@ -884,6 +884,9 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
   </a>
   <a href="staff_reports.php" class="nav-item"><i class="fas fa-chart-bar"></i> Sales Report</a>
   <hr class="sidebar-divider"/>
+  <div class="sidebar-footer">
+    <p>SmartStock v1.0<br />Bean There Café<br />ISO/IEC 25010 Compliant</p>
+  </div>
 </nav>
 
 <div id="main">

@@ -229,33 +229,33 @@ function build_sales_report(mysqli $conn, string $period, int $categoryId, strin
         $catData[] = round($c['revenue'], 2);
     }
 
-    $productAgg = [];
-    foreach ($filteredItems as $row) {
+    // Unfiltered by category (unlike $filteredItems) so the Top Selling Products modal can
+    // rank/slice per whatever category it's showing, independent of the toolbar's own filter.
+    $allProductsAgg = [];
+    foreach ($items as $row) {
         $pid = (int)$row['product_id'];
-        if (!isset($productAgg[$pid])) {
-            $productAgg[$pid] = [
+        if (!isset($allProductsAgg[$pid])) {
+            $allProductsAgg[$pid] = [
                 'name' => $row['product_name'],
+                'category_id' => (int)$row['product_category_id'],
                 'category_name' => $row['product_category'],
                 'units' => 0,
                 'revenue' => 0.0,
             ];
         }
-        $productAgg[$pid]['units'] += (int)$row['quantity'];
-        $productAgg[$pid]['revenue'] += (float)$row['subtotal'];
+        $allProductsAgg[$pid]['units'] += (int)$row['quantity'];
+        $allProductsAgg[$pid]['revenue'] += (float)$row['subtotal'];
     }
-    uasort($productAgg, fn($a, $b) => $b['revenue'] <=> $a['revenue']);
-    $totalProductRevenue = array_sum(array_column($productAgg, 'revenue'));
-    $topProducts = [];
-    $rank = 1;
-    foreach (array_slice($productAgg, 0, 5, true) as $p) {
-        $topProducts[] = [
-            'rank' => $rank++,
+    uasort($allProductsAgg, fn($a, $b) => $b['revenue'] <=> $a['revenue']);
+    $allProducts = [];
+    foreach ($allProductsAgg as $p) {
+        $allProducts[] = [
             'name' => $p['name'],
+            'category_id' => $p['category_id'],
             'category_name' => $p['category_name'],
             'tag_class' => report_category_tag_class($p['category_name']),
             'units' => $p['units'],
             'revenue' => round($p['revenue'], 2),
-            'share' => $totalProductRevenue > 0 ? round(($p['revenue'] / $totalProductRevenue) * 100) : 0,
         ];
     }
 
@@ -280,7 +280,7 @@ function build_sales_report(mysqli $conn, string $period, int $categoryId, strin
             'labels' => $catLabels,
             'data' => $catData,
         ],
-        'topProducts' => $topProducts,
+        'allProducts' => $allProducts,
     ];
 }
 
@@ -337,6 +337,7 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
   <style>
     :root {
       --mocha: #4A2C2A;
@@ -1170,8 +1171,24 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
       margin-bottom: 18px;
     }
 
+    /* ── MODAL ── */
+    .modal-overlay { position:fixed; inset:0; z-index:9999; background:rgba(20,10,8,.58); display:none; align-items:center; justify-content:center; backdrop-filter:blur(4px); }
+    .modal-overlay.show { display:flex; }
+    .modal-box { background:var(--cream-light); border-radius:var(--radius-lg); padding:28px 30px; max-width:420px; width:92%; max-height:88vh; overflow-y:auto; box-shadow:var(--shadow-lg); animation:popIn .25s cubic-bezier(.34,1.56,.64,1); }
+    @keyframes popIn { from{opacity:0;transform:scale(.88);}to{opacity:1;transform:scale(1);} }
+    .modal-title { font-family:var(--font-display); font-size:19px; color:var(--mocha-deep); margin-bottom:5px; }
+    .modal-sub   { font-size:13px; color:#888; margin-bottom:18px; }
+    .modal-field { margin-bottom:14px; }
+    .modal-field label { display:block; font-size:11px; font-weight:700; letter-spacing:.6px; text-transform:uppercase; color:#888; margin-bottom:5px; }
+    .modal-field input, .modal-field select { width:100%; padding:9px 13px; border-radius:8px; border:1.5px solid var(--cream-dark); background:var(--cream); font-family:var(--font-body); font-size:13px; color:var(--charcoal); outline:none; transition:border-color .2s; }
+    .modal-field input:focus, .modal-field select:focus { border-color:var(--mocha); }
+    .btn-modal-primary { width:100%; padding:12px; background:var(--mocha); color:var(--cream); border:none; border-radius:var(--radius); font-family:var(--font-body); font-size:14px; font-weight:700; cursor:pointer; transition:all .2s; }
+    .btn-modal-primary:hover { background:var(--mocha-mid); }
+    .btn-modal-cancel { width:100%; padding:9px; margin-top:7px; background:transparent; color:#bbb; border:1.5px solid var(--cream-dark); border-radius:8px; font-family:var(--font-body); font-size:13px; cursor:pointer; transition:all .2s; }
+    .btn-modal-cancel:hover { color:var(--red-soft); border-color:var(--red-soft); }
+
     @media print {
-      #app-header, #sidebar, #report-toolbar, .page-strip .btn-outline, .page-strip .btn-primary, #toast-container {
+      #app-header, #sidebar, #report-toolbar, .page-strip .btn-outline, .page-strip .btn-primary, #toast-container, .modal-overlay {
         display: none !important;
       }
       #main {
@@ -1227,6 +1244,9 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
       Settings</a>
     <a href="backup.php" class="nav-item"><i class="fas fa-database"></i> Data Backup
     </a>
+    <div class="sidebar-footer">
+      <p>SmartStock v1.0<br />Bean There Café<br />ISO/IEC 25010 Compliant</p>
+    </div>
   </nav>
 
   <div id="main">
@@ -1320,6 +1340,11 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
           <div class="rpt-mini-value" id="rpt-top-val" style="font-size:16px;">—</div>
           <div class="rpt-mini-trend" id="rpt-top-sub" style="color:#aaa;">No sales yet</div>
         </div>
+
+        <div class="rpt-mini" style="cursor:pointer;" onclick="openTopProductsModal()" title="View top 20 selling products">
+          <div class="rpt-mini-label">Top Selling Products</div>
+          <div class="rpt-mini-value" style="font-size:15px;color:var(--gold);">View Top 20 <i class="fas fa-arrow-right" style="font-size:12px;"></i></div>
+        </div>
       </div>
 
       <div class="charts-grid">
@@ -1335,8 +1360,24 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
         </div>
       </div>
 
-      <div class="dash-card">
-        <div class="dash-card-title"><i class="fas fa-trophy"></i>Top Selling Products</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="top-products-modal">
+    <div class="modal-box" style="max-width:720px;">
+      <div class="modal-title"><i class="fas fa-trophy" style="color:var(--gold);margin-right:8px;"></i>Top Selling Products</div>
+      <div class="modal-sub">Top 20 best-selling products for the currently selected period.</div>
+      <div class="modal-field" style="margin-bottom:14px;">
+        <label>Category</label>
+        <select class="filter-select" id="top-products-category" onchange="renderTopProductsModal()" style="width:100%;">
+          <option value="0">All Categories</option>
+          <?php foreach ($categories as $cat): ?>
+            <option value="<?= (int)$cat['product_category_id'] ?>"><?= htmlspecialchars($cat['product_category']) ?></option>
+          <?php endforeach; ?>
+        </select>
+      </div>
+      <div style="max-height:50vh;overflow-y:auto;">
         <table class="rec-table">
           <thead>
             <tr>
@@ -1348,10 +1389,11 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
               <th>Share</th>
             </tr>
           </thead>
-          <tbody id="top-selling-tbody"></tbody>
+          <tbody id="top-products-modal-tbody"></tbody>
         </table>
       </div>
-      </div>
+      <button type="button" class="btn-modal-primary" id="export-top-products-btn" onclick="exportTopProductsPdf()"><i class="fas fa-file-pdf" style="margin-right:6px;"></i>Export PDF</button>
+      <button type="button" class="btn-modal-cancel" onclick="closeModal('top-products-modal')">Close</button>
     </div>
   </div>
 
@@ -1360,6 +1402,13 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
 
   <script>
     let salesChart = null, catChart = null, currentPeriod = 'daily', currentCategory = '0';
+    // Full, category-tagged, revenue-ranked product list for the current period (unaffected by
+    // the toolbar's own category filter) — feeds the Top Selling Products modal client-side, no
+    // extra fetch needed since it rides along in every report-data response.
+    let latestAllProducts = [];
+    // The exact rows currently shown in the Top Selling Products modal (rank/share already
+    // computed for whatever category is selected there) — reused as-is by its PDF export.
+    let lastTopProductsRendered = [];
 
     document.addEventListener('DOMContentLoaded', () => {
       updateClock(); setInterval(updateClock, 1000);
@@ -1449,18 +1498,51 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
       document.getElementById('rpt-top-val').textContent = data.kpis.topValue;
       document.getElementById('rpt-top-sub').textContent = data.kpis.topSub;
 
-      renderTopProducts(data.topProducts);
+      latestAllProducts = data.allProducts || [];
       renderCharts(data);
     }
 
-    function renderTopProducts(products) {
-      const tbody = document.getElementById('top-selling-tbody');
-      if (!products || products.length === 0) {
+    function openModal(id)  { document.getElementById(id).classList.add('show'); }
+    function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+    document.querySelectorAll('.modal-overlay').forEach(m =>
+      m.addEventListener('click', e => { if (e.target === m) closeModal(m.id); })
+    );
+
+    function openTopProductsModal() {
+      renderTopProductsModal();
+      openModal('top-products-modal');
+    }
+
+    // Purely client-side: filters/re-ranks the already-fetched latestAllProducts by whichever
+    // category this modal's own dropdown has selected (independent of the toolbar's filter),
+    // so no server round-trip is needed when switching categories here.
+    function renderTopProductsModal() {
+      const categoryId = document.getElementById('top-products-category').value;
+      const tbody = document.getElementById('top-products-modal-tbody');
+      const matching = categoryId === '0'
+        ? latestAllProducts
+        : latestAllProducts.filter(p => String(p.category_id) === categoryId);
+
+      if (matching.length === 0) {
         tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px 8px;">No sales recorded for this period yet.</td></tr>';
+        lastTopProductsRendered = [];
         return;
       }
+
+      // Share is relative to this filtered subset's own total, not a grand total — so picking a
+      // category shows what fraction of THAT category's revenue each product accounts for.
+      const subsetTotal = matching.reduce((sum, p) => sum + p.revenue, 0);
       const medals = { 1: '🥇', 2: '🥈', 3: '🥉' };
-      tbody.innerHTML = products.map(p => `
+      lastTopProductsRendered = matching.slice(0, 20).map((p, i) => ({
+        rank: i + 1,
+        name: p.name,
+        category_name: p.category_name,
+        tag_class: p.tag_class,
+        units: p.units,
+        revenue: p.revenue,
+        share: subsetTotal > 0 ? Math.round((p.revenue / subsetTotal) * 100) : 0,
+      }));
+      tbody.innerHTML = lastTopProductsRendered.map(p => `
         <tr>
           <td>${medals[p.rank] || p.rank}</td>
           <td style="font-weight:600;">${p.name}</td>
@@ -1476,6 +1558,51 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
           </td>
         </tr>
       `).join('');
+    }
+
+    async function exportTopProductsPdf() {
+      if (lastTopProductsRendered.length === 0) {
+        showToast('Nothing to export for this category.', 'warn');
+        return;
+      }
+      const btn = document.getElementById('export-top-products-btn');
+      const originalHtml = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating…';
+
+      try {
+        const catSelect = document.getElementById('top-products-category');
+        const catLabel = catSelect.options[catSelect.selectedIndex].textContent;
+        const from = document.getElementById('date-from').value;
+        const till = document.getElementById('date-till').value;
+        const context = `Top Selling Products · ${catLabel} · ${from} to ${till} · Generated ${new Date().toLocaleString('en-PH')}`;
+
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+        pdf.setFontSize(14);
+        pdf.text('Bean There Café — Top Selling Products', 40, 40);
+        pdf.setFontSize(9);
+        pdf.setTextColor(120);
+        pdf.text(context, 40, 56);
+
+        pdf.autoTable({
+          startY: 70,
+          head: [['Rank', 'Product', 'Category', 'Units Sold', 'Revenue', 'Share']],
+          body: lastTopProductsRendered.map(p => [
+            String(p.rank), p.name, p.category_name, p.units.toLocaleString(), money(p.revenue), p.share + '%'
+          ]),
+          styles: { fontSize: 9 },
+          headStyles: { fillColor: [74, 44, 42] },
+        });
+
+        pdf.save(`top-selling-products-${from}-to-${till}.pdf`);
+        showToast('PDF exported.', 'success');
+      } catch (err) {
+        showToast('Could not generate the PDF. Please try again.', 'warn');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+      }
     }
 
     function renderCharts(data) {

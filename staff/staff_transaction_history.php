@@ -19,19 +19,10 @@ function history_category_tag_class(string $name): string
     return 'tag-supply';
 }
 
-// Builds one page of transaction history for the given date range/category filter — shared by
-// the first paint (below) and the action=history JSON endpoint, so both stay in sync.
-//
-// Unlike staff_reports.php (Sales Report), Transaction History intentionally shows ALL
-// transactions to every staff member, not just their own — a confirmed product decision.
-// Do not add a "WHERE t.user_id = ?" scope here.
-function build_history_result(mysqli $conn, string $dateFrom, string $dateTill, int $categoryId, int $page): array
+// Shared WHERE-clause fragments for category/hour filtering, used by both the paginated list
+// and the unpaginated export so they always match exactly the same set of transactions.
+function history_filter_sql(int $categoryId, bool $allDay): array
 {
-    if ($dateTill < $dateFrom) {
-        [$dateFrom, $dateTill] = [$dateTill, $dateFrom];
-    }
-    $perPage = HISTORY_PER_PAGE;
-
     // A transaction is included if ANY of its line items belong to the selected category —
     // an EXISTS check keeps the main query's row shape untouched (still one row per transaction,
     // still able to show that transaction's full item list, not just the matching items).
@@ -42,14 +33,32 @@ function build_history_result(mysqli $conn, string $dateFrom, string $dateTill, 
               WHERE ti2.transaction_id = t.transaction_id AND p2.product_category_id = ?
           )'
         : '';
+    $timeSql = $allDay ? '' : ' AND HOUR(t.transaction_date) BETWEEN ? AND ?';
+    return [$categorySql, $timeSql];
+}
 
-    $countSql = "SELECT COUNT(*) AS cnt FROM transactions t WHERE DATE(t.transaction_date) BETWEEN ? AND ?" . $categorySql;
-    $stmt = $conn->prepare($countSql);
-    if ($categoryId > 0) {
-        $stmt->bind_param('ssi', $dateFrom, $dateTill, $categoryId);
-    } else {
-        $stmt->bind_param('ss', $dateFrom, $dateTill);
+// Builds one page of transaction history for the given date/hour range/category filter — shared
+// by the first paint (below) and the action=history JSON endpoint, so both stay in sync.
+//
+// Unlike staff_reports.php (Sales Report), Transaction History intentionally shows ALL
+// transactions to every staff member, not just their own — a confirmed product decision.
+// Do not add a "WHERE t.user_id = ?" scope here.
+function build_history_result(mysqli $conn, string $dateFrom, string $dateTill, int $categoryId, int $page, bool $allDay, int $timeStart, int $timeEnd): array
+{
+    if ($dateTill < $dateFrom) {
+        [$dateFrom, $dateTill] = [$dateTill, $dateFrom];
     }
+    $perPage = HISTORY_PER_PAGE;
+
+    [$categorySql, $timeSql] = history_filter_sql($categoryId, $allDay);
+    $types = 'ss';
+    $params = [$dateFrom, $dateTill];
+    if ($categoryId > 0) { $types .= 'i'; $params[] = $categoryId; }
+    if (!$allDay) { $types .= 'ii'; $params[] = $timeStart; $params[] = $timeEnd; }
+
+    $countSql = "SELECT COUNT(*) AS cnt FROM transactions t WHERE DATE(t.transaction_date) BETWEEN ? AND ?" . $categorySql . $timeSql;
+    $stmt = $conn->prepare($countSql);
+    $stmt->bind_param($types, ...$params);
     $stmt->execute();
     $totalCount = (int)$stmt->get_result()->fetch_assoc()['cnt'];
     $stmt->close();
@@ -65,15 +74,13 @@ function build_history_result(mysqli $conn, string $dateFrom, string $dateTill, 
                        COALESCE(t.cashier_username, u.username, 'Deleted user') AS cashier_name
                 FROM transactions t
                 LEFT JOIN users u ON u.user_id = t.user_id
-                WHERE DATE(t.transaction_date) BETWEEN ? AND ?" . $categorySql . "
+                WHERE DATE(t.transaction_date) BETWEEN ? AND ?" . $categorySql . $timeSql . "
                 ORDER BY t.transaction_date DESC
                 LIMIT ? OFFSET ?";
     $stmt = $conn->prepare($listSql);
-    if ($categoryId > 0) {
-        $stmt->bind_param('ssiii', $dateFrom, $dateTill, $categoryId, $perPage, $offset);
-    } else {
-        $stmt->bind_param('ssii', $dateFrom, $dateTill, $perPage, $offset);
-    }
+    $listTypes = $types . 'ii';
+    $listParams = array_merge($params, [$perPage, $offset]);
+    $stmt->bind_param($listTypes, ...$listParams);
     $stmt->execute();
     $result = $stmt->get_result();
     $rowsByTxn = [];
@@ -156,9 +163,87 @@ function build_history_result(mysqli $conn, string $dateFrom, string $dateTill, 
             'perPage' => $perPage,
             'totalCount' => $totalCount,
             'totalPages' => $totalPages,
+            'allDay' => $allDay,
+            'timeStart' => $timeStart,
+            'timeEnd' => $timeEnd,
         ],
         'transactions' => $transactions,
     ];
+}
+
+// Unpaginated — every matching transaction, used by the PDF export so the download reflects the
+// full filtered range, not just the current 25-per-page view. Items are summarized as plain text
+// (not full detail) since that's all a PDF row needs.
+//
+// Same as build_history_result() above: intentionally NOT scoped to the logged-in staff member.
+function build_history_export(mysqli $conn, string $dateFrom, string $dateTill, int $categoryId, bool $allDay, int $timeStart, int $timeEnd): array
+{
+    if ($dateTill < $dateFrom) {
+        [$dateFrom, $dateTill] = [$dateTill, $dateFrom];
+    }
+
+    [$categorySql, $timeSql] = history_filter_sql($categoryId, $allDay);
+    $types = 'ss';
+    $params = [$dateFrom, $dateTill];
+    if ($categoryId > 0) { $types .= 'i'; $params[] = $categoryId; }
+    if (!$allDay) { $types .= 'ii'; $params[] = $timeStart; $params[] = $timeEnd; }
+
+    $listSql = "SELECT t.transaction_id, t.transaction_date, t.transaction_total, t.transaction_status,
+                       t.payment_method,
+                       COALESCE(t.cashier_username, u.username, 'Deleted user') AS cashier_name
+                FROM transactions t
+                LEFT JOIN users u ON u.user_id = t.user_id
+                WHERE DATE(t.transaction_date) BETWEEN ? AND ?" . $categorySql . $timeSql . "
+                ORDER BY t.transaction_date DESC";
+    $stmt = $conn->prepare($listSql);
+    $stmt->bind_param($types, ...$params);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $rowsByTxn = [];
+    $ids = [];
+    while ($row = $result->fetch_assoc()) {
+        $tid = (int)$row['transaction_id'];
+        $rowsByTxn[$tid] = $row;
+        $ids[] = $tid;
+    }
+    $stmt->close();
+
+    $itemSummaryByTxn = [];
+    if ($ids) {
+        $placeholders = implode(',', array_fill(0, count($ids), '?'));
+        $itemTypes = str_repeat('i', count($ids));
+        $itemSql = "SELECT ti.transaction_id, ti.quantity,
+                           COALESCE(ti.product_name_snapshot, p.product_name, 'Deleted product') AS product_name
+                    FROM transaction_items ti
+                    LEFT JOIN products p ON p.product_id = ti.product_id
+                    WHERE ti.transaction_id IN ($placeholders)
+                    ORDER BY ti.transaction_id, ti.transaction_item_id";
+        $stmt = $conn->prepare($itemSql);
+        $stmt->bind_param($itemTypes, ...$ids);
+        $stmt->execute();
+        $res = $stmt->get_result();
+        while ($row = $res->fetch_assoc()) {
+            $itemSummaryByTxn[(int)$row['transaction_id']][] = ((int)$row['quantity']) . '× ' . $row['product_name'];
+        }
+        $stmt->close();
+    }
+
+    $transactions = [];
+    foreach ($rowsByTxn as $tid => $t) {
+        $dt = new DateTime($t['transaction_date']);
+        $transactions[] = [
+            'id' => $tid,
+            'dateLabel' => $dt->format('M j, Y'),
+            'timeLabel' => $dt->format('g:i A'),
+            'cashier' => $t['cashier_name'],
+            'paymentLabel' => $t['payment_method'] === 'online' ? 'Online' : 'Cash',
+            'statusLabel' => $t['transaction_status'] === 'completed' ? 'Completed' : 'Cancelled',
+            'itemsSummary' => !empty($itemSummaryByTxn[$tid]) ? implode(', ', $itemSummaryByTxn[$tid]) : '—',
+            'total' => round((float)$t['transaction_total'], 2),
+        ];
+    }
+
+    return $transactions;
 }
 
 // Feeds the "Inventory" nav-badge — ingredients at critical or low stock.
@@ -179,6 +264,73 @@ while ($row = $catResult->fetch_assoc()) {
     $categories[] = $row;
 }
 
+// Voids a completed sale from its history detail view: flips its status (Sales Report/Dashboard
+// already filter to 'completed' only, so this drops it out of revenue automatically) and restores
+// the stock it consumed — product_stocks for prepared items via transaction_items, ingredient_stock
+// via the exact amounts recorded in ingredient_usage_snapshot at sale time.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cancel_transaction') {
+    header('Content-Type: application/json');
+
+    $transactionId = (int)($_POST['transaction_id'] ?? 0);
+    if ($transactionId <= 0) {
+        echo json_encode(['success' => false, 'error' => 'Invalid transaction.']);
+        exit;
+    }
+
+    $conn->begin_transaction();
+    try {
+        $stmt = $conn->prepare("SELECT ingredient_usage_snapshot FROM transactions WHERE transaction_id = ? AND transaction_status = 'completed' FOR UPDATE");
+        $stmt->bind_param('i', $transactionId);
+        $stmt->execute();
+        $txnRow = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+        if (!$txnRow) {
+            throw new RuntimeException('Transaction not found or already cancelled.');
+        }
+
+        $update = $conn->prepare("UPDATE transactions SET transaction_status = 'cancelled' WHERE transaction_id = ? AND transaction_status = 'completed'");
+        $update->bind_param('i', $transactionId);
+        $update->execute();
+        if ($update->affected_rows === 0) {
+            throw new RuntimeException('Transaction not found or already cancelled.');
+        }
+        $update->close();
+
+        $itemsStmt = $conn->prepare('SELECT product_id, quantity FROM transaction_items WHERE transaction_id = ?');
+        $itemsStmt->bind_param('i', $transactionId);
+        $itemsStmt->execute();
+        $itemsResult = $itemsStmt->get_result();
+        $restoreStock = $conn->prepare("UPDATE products SET product_stocks = product_stocks + ? WHERE product_id = ? AND product_type = 'prepared'");
+        while ($item = $itemsResult->fetch_assoc()) {
+            if ($item['product_id'] === null) continue;
+            $restoreStock->bind_param('ii', $item['quantity'], $item['product_id']);
+            $restoreStock->execute();
+        }
+        $itemsStmt->close();
+        $restoreStock->close();
+
+        $usage = json_decode($txnRow['ingredient_usage_snapshot'] ?? '[]', true) ?: [];
+        if ($usage) {
+            $restoreIngredient = $conn->prepare('UPDATE product_ingredients SET ingredient_stock = ingredient_stock + ? WHERE product_ingredients_id = ?');
+            foreach ($usage as $ingredientId => $qty) {
+                $ingredientId = (int)$ingredientId;
+                $qty = (float)$qty;
+                if ($ingredientId <= 0 || $qty <= 0) continue;
+                $restoreIngredient->bind_param('di', $qty, $ingredientId);
+                $restoreIngredient->execute();
+            }
+            $restoreIngredient->close();
+        }
+
+        $conn->commit();
+        echo json_encode(['success' => true, 'transaction_id' => $transactionId]);
+    } catch (Throwable $e) {
+        $conn->rollback();
+        echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
 if (isset($_GET['action']) && $_GET['action'] === 'history') {
     header('Content-Type: application/json');
 
@@ -188,13 +340,32 @@ if (isset($_GET['action']) && $_GET['action'] === 'history') {
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateFrom)) $dateFrom = date('Y-m-d');
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateTill)) $dateTill = date('Y-m-d');
     $page = max(1, (int)($_GET['page'] ?? 1));
+    $allDay = ($_GET['all_day'] ?? '1') !== '0';
+    $timeStart = max(0, min(23, (int)($_GET['time_start'] ?? 0)));
+    $timeEnd = max(0, min(23, (int)($_GET['time_end'] ?? 23)));
 
-    echo json_encode(build_history_result($conn, $dateFrom, $dateTill, $categoryId, $page), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP);
+    echo json_encode(build_history_result($conn, $dateFrom, $dateTill, $categoryId, $page, $allDay, $timeStart, $timeEnd), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP);
+    exit;
+}
+
+if (isset($_GET['action']) && $_GET['action'] === 'export') {
+    header('Content-Type: application/json');
+
+    $categoryId = (int)($_GET['category'] ?? 0);
+    $dateFrom = $_GET['date_from'] ?? date('Y-m-d');
+    $dateTill = $_GET['date_till'] ?? date('Y-m-d');
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateFrom)) $dateFrom = date('Y-m-d');
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateTill)) $dateTill = date('Y-m-d');
+    $allDay = ($_GET['all_day'] ?? '1') !== '0';
+    $timeStart = max(0, min(23, (int)($_GET['time_start'] ?? 0)));
+    $timeEnd = max(0, min(23, (int)($_GET['time_end'] ?? 23)));
+
+    echo json_encode(['transactions' => build_history_export($conn, $dateFrom, $dateTill, $categoryId, $allDay, $timeStart, $timeEnd)], JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP);
     exit;
 }
 
 $todayStr = date('Y-m-d');
-$initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1);
+$initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 0, 23);
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -205,6 +376,8 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1);
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet"/>
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 
   <style>
      :root {
@@ -306,6 +479,12 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1);
     .nav-item.active { background: rgba(201,148,58,.12); color: var(--gold-light); border-left-color: var(--gold); }
     .nav-item.active i { color: var(--gold); }
     .sidebar-divider { border: none; border-top: 1px solid rgba(255,255,255,.07); margin: 8px 16px; }
+    .sidebar-footer {
+      margin-top: auto; padding: 16px 20px;
+      border-top: 1px solid rgba(255,255,255,.07);
+      text-align: center;
+    }
+    .sidebar-footer p { font-size: 10px; color: rgba(245,236,215,.22); line-height: 1.7; }
 
     /* ── MAIN ── */
     #main { margin-left: var(--sidebar-w); margin-top: var(--header-h); min-height: calc(100vh - var(--header-h)); }
@@ -362,6 +541,8 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1);
 
     .time-filter-wrapper { display: flex; align-items: center; gap: 8px; background: var(--cream); border: 1.5px solid var(--cream-dark); border-radius: 8px; padding: 6px 12px; height: 38px; }
     .time-filter-wrapper input[type="date"] { border:none; background:transparent; font-family:var(--font-mono); font-size:13px; font-weight:600; color:var(--charcoal); outline:none; width:110px; }
+    .time-filter-wrapper input[type="time"] { border:none; background:transparent; font-family:var(--font-mono); font-size:13px; font-weight:600; color:var(--mocha-deep); outline:none; cursor:pointer; }
+    .all-day-label { display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600; color:var(--mocha-deep); cursor:pointer; user-select:none; }
 
     /* ── TEXT UTILS ── */
     .text-mono  { font-family: var(--font-mono); }
@@ -420,6 +601,9 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1);
   </a>
   <a href="staff_reports.php" class="nav-item"><i class="fas fa-chart-bar"></i> Sales Report</a>
   <hr class="sidebar-divider" />
+  <div class="sidebar-footer">
+    <p>SmartStock v1.0<br />Bean There Café<br />ISO/IEC 25010 Compliant</p>
+  </div>
 </nav>
 
 <div id="main">
@@ -431,14 +615,26 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1);
   </div>
   <div style="padding:22px 26px;">
 
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:15px;">
-      <div class="period-tabs" id="period-tabs">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:nowrap; overflow-x:auto; padding-bottom:4px; gap:12px;">
+      <div class="period-tabs" id="period-tabs" style="flex-shrink:0;">
         <button class="period-tab active" onclick="switchPeriod('daily',this)">Day</button>
         <button class="period-tab" onclick="switchPeriod('weekly',this)">Week</button>
         <button class="period-tab" onclick="switchPeriod('monthly',this)">Month</button>
         <button class="period-tab" onclick="switchPeriod('yearly',this)">Year</button>
       </div>
-      <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+      <div style="display:flex; gap:12px; align-items:center; flex-wrap:nowrap; flex-shrink:0;">
+        <div class="time-filter-wrapper" title="Filter by hours of the day">
+          <label class="all-day-label">
+            <input type="checkbox" id="all-day-cb" checked onchange="toggleAllDay()"> All Day
+          </label>
+          <div id="time-inputs"
+            style="display:flex; visibility:hidden; pointer-events:none; align-items:center; gap:8px; padding-left:10px; border-left:1.5px solid var(--cream-dark); margin-left:4px;">
+            <i class="fas fa-clock" style="color:#aaa; font-size:13px;"></i>
+            <input type="time" id="time-start" value="07:00" onchange="onDateChange()">
+            <span style="font-size:12px; color:#aaa; font-weight:600;">to</span>
+            <input type="time" id="time-end" value="19:00" onchange="onDateChange()">
+          </div>
+        </div>
         <div class="time-filter-wrapper" title="Filter by date range">
           <i class="fas fa-calendar-alt" style="color:#aaa; font-size:13px;"></i>
           <input type="date" id="date-from" value="<?= htmlspecialchars($todayStr) ?>" onchange="onDateChange()">
@@ -451,6 +647,7 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1);
             <option value="<?= (int)$cat['product_category_id'] ?>"><?= htmlspecialchars($cat['product_category']) ?></option>
           <?php endforeach; ?>
         </select>
+        <button class="btn-outline" id="export-history-btn" onclick="exportHistoryPdf()"><i class="fas fa-file-pdf"></i> Export PDF</button>
       </div>
     </div>
 
@@ -484,7 +681,19 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1);
     <div id="txn-detail-notes-row" style="display:none;margin-top:12px;padding:10px 12px;background:var(--cream);border:1px dashed var(--cream-dark);border-radius:8px;font-size:12.5px;color:var(--charcoal-mid);">
       <strong>Note:</strong> <span id="txn-detail-notes"></span>
     </div>
-    <button type="button" class="btn-modal-cancel" onclick="closeModal('txn-detail-modal')">Close</button>
+    <div style="display:flex; gap:10px; margin-top:16px;">
+      <button type="button" class="btn-modal-cancel" id="txn-detail-cancel-btn" style="display:none;flex:1;width:auto;margin-top:0;background:var(--red-soft);color:#fff;border-color:var(--red-soft);" onclick="requestCancelTransaction()"><i class="fas fa-ban" style="margin-right:6px;"></i>Cancel Order</button>
+      <button type="button" class="btn-modal-cancel" style="flex:1;width:auto;margin-top:0;" onclick="closeModal('txn-detail-modal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-confirm-cancel-txn">
+  <div class="modal-box" style="max-width:360px;">
+    <h2 class="modal-title">Cancel This Order?</h2>
+    <p style="font-size:13px;color:var(--charcoal-mid);margin-bottom:18px;">This voids the transaction and restores the stock/ingredients it used. This cannot be undone.</p>
+    <button class="btn-modal-cancel" style="width:100%;margin-top:0;background:var(--red-soft);color:#fff;border-color:var(--red-soft);" onclick="confirmCancelTransaction()">Yes, Cancel Order</button>
+    <button class="btn-modal-cancel" style="width:100%;margin-top:8px;" onclick="closeModal('modal-confirm-cancel-txn')">No, Keep It</button>
   </div>
 </div>
 
@@ -492,7 +701,7 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1);
 <script id="history-data" type="application/json"><?= json_encode($initialHistory, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?></script>
 
 <script>
-  let currentCategory = '0', currentPage = 1, currentTransactions = [];
+  let currentCategory = '0', currentPage = 1, currentTransactions = [], currentDetailId = null;
 
   document.addEventListener('DOMContentLoaded', () => {
     updateClock(); setInterval(updateClock, 1000);
@@ -540,24 +749,95 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1);
     fetchHistory();
   }
 
+  // Shows/hides the hour-range inputs via visibility (not display) so the toolbar's width stays
+  // constant either way — toggling All Day never shifts the date-range box or category select.
+  function toggleAllDay() {
+    const isAllDay = document.getElementById('all-day-cb').checked;
+    const timeInputs = document.getElementById('time-inputs');
+    timeInputs.style.visibility = isAllDay ? 'hidden' : 'visible';
+    timeInputs.style.pointerEvents = isAllDay ? 'none' : 'auto';
+    currentPage = 1;
+    fetchHistory();
+  }
+
   function goToPage(delta) {
     currentPage += delta;
     fetchHistory();
   }
 
-  async function fetchHistory() {
-    const params = new URLSearchParams({
-      action: 'history',
+  function currentFilterParams() {
+    return {
       category: currentCategory,
       date_from: document.getElementById('date-from').value,
       date_till: document.getElementById('date-till').value,
-      page: currentPage
-    });
+      all_day: document.getElementById('all-day-cb').checked ? '1' : '0',
+      time_start: (document.getElementById('time-start').value || '00:00').split(':')[0],
+      time_end: (document.getElementById('time-end').value || '23:59').split(':')[0],
+    };
+  }
+
+  async function fetchHistory() {
+    const params = new URLSearchParams({ action: 'history', page: currentPage, ...currentFilterParams() });
     try {
       const res = await fetch('staff_transaction_history.php?' + params.toString());
       renderHistory(await res.json());
     } catch (err) {
       showToast('Could not load transaction history.', 'warn');
+    }
+  }
+
+  // Fetches every matching transaction for the current date/hour/category filters (ignoring the
+  // 25-per-page limit — that's a display-only cap, not a scope cap) and builds a real tabular PDF.
+  async function exportHistoryPdf() {
+    const btn = document.getElementById('export-history-btn');
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating…';
+
+    try {
+      const filters = currentFilterParams();
+      const params = new URLSearchParams({ action: 'export', ...filters });
+      const res = await fetch('staff_transaction_history.php?' + params.toString());
+      const data = await res.json();
+      const rows = data.transactions || [];
+
+      if (rows.length === 0) {
+        showToast('No transactions to export for this filter.', 'warn');
+        return;
+      }
+
+      const isAllDay = document.getElementById('all-day-cb').checked;
+      const hourLabel = isAllDay ? 'All Day' : `${document.getElementById('time-start').value}–${document.getElementById('time-end').value}`;
+      const catSelect = document.getElementById('history-category');
+      const catLabel = catSelect.options[catSelect.selectedIndex].textContent;
+      const context = `${filters.date_from} to ${filters.date_till} · ${hourLabel} · ${catLabel} · Generated ${new Date().toLocaleString('en-PH')}`;
+
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+      pdf.setFontSize(14);
+      pdf.text('Bean There Café — Transaction History', 40, 40);
+      pdf.setFontSize(9);
+      pdf.setTextColor(120);
+      pdf.text(context, 40, 56);
+
+      pdf.autoTable({
+        startY: 70,
+        head: [['#', 'Date & Time', 'Items', 'Cashier', 'Payment', 'Total', 'Status']],
+        body: rows.map(t => [
+          '#' + t.id, `${t.dateLabel} ${t.timeLabel}`, t.itemsSummary, t.cashier, t.paymentLabel, money(t.total), t.statusLabel
+        ]),
+        styles: { fontSize: 8, cellWidth: 'wrap' },
+        columnStyles: { 2: { cellWidth: 260 } },
+        headStyles: { fillColor: [74, 44, 42] },
+      });
+
+      pdf.save(`transaction-history-${filters.date_from}-to-${filters.date_till}.pdf`);
+      showToast(`PDF exported (${rows.length} transaction${rows.length === 1 ? '' : 's'}).`, 'success');
+    } catch (err) {
+      showToast('Could not generate the PDF. Please try again.', 'warn');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
     }
   }
 
@@ -627,6 +907,8 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1);
   function openTxnDetail(id) {
     const t = currentTransactions.find(x => x.id === id);
     if (!t) return;
+    currentDetailId = t.id;
+    document.getElementById('txn-detail-cancel-btn').style.display = t.status === 'completed' ? 'inline-block' : 'none';
     document.getElementById('txn-detail-title').innerHTML = `<i class="fas fa-receipt" style="color:var(--gold);margin-right:8px;"></i>Transaction #${t.id}`;
     document.getElementById('txn-detail-sub').innerHTML = `${t.dateLabel} · ${t.timeLabel} <span class="status-pill ${t.status === 'completed' ? 'pill-success' : 'pill-red'}" style="margin-left:6px;">${t.statusLabel}</span>`;
     document.getElementById('txn-detail-items').innerHTML = t.items.map(it => `
@@ -657,6 +939,34 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1);
       notesRow.style.display = 'none';
     }
     openModal('txn-detail-modal');
+  }
+
+  function requestCancelTransaction() {
+    if (!currentDetailId) return;
+    openModal('modal-confirm-cancel-txn');
+  }
+
+  async function confirmCancelTransaction() {
+    const id = currentDetailId;
+    closeModal('modal-confirm-cancel-txn');
+    if (!id) return;
+    try {
+      const res = await fetch('staff_transaction_history.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ action: 'cancel_transaction', transaction_id: id })
+      });
+      const data = await res.json();
+      if (!data.success) {
+        showToast(data.error || 'Could not cancel this order.', 'warn');
+        return;
+      }
+      showToast(`Transaction #${id} cancelled — stock restored.`, 'success');
+      await fetchHistory();
+      openTxnDetail(id);
+    } catch (err) {
+      showToast('Could not reach the server. Please try again.', 'warn');
+    }
   }
 
   function openModal(id)  { document.getElementById(id).classList.add('show'); }
