@@ -26,9 +26,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $user = $result->fetch_assoc();
         $stmt->close();
 
-        // TEMPORARY: accepts both hashed and plain-text passwords while testing.
-        // Later, remove the "|| $password === $user['password']" part to require hashed passwords only.
-        if ($user && (password_verify($password, $user['password']) || $password === $user['password'])) {
+        if ($user && password_verify($password, $user['password'])) {
             if ($user['status'] === 'inactive') {
                 $error = 'This account has been deactivated. Contact the café owner.';
             } else {

@@ -426,10 +426,10 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
       border-right: 1px solid rgba(255,255,255,.08);
     }
     .brand-logo {
-      width: 38px; height: 38px; border-radius: 10px;
+      width: 42px; height: 42px; border-radius: 10px;
       background: var(--gold); color: var(--mocha-deep);
       display: flex; align-items: center; justify-content: center;
-      font-size: 18px; box-shadow: 0 2px 10px rgba(201,148,58,.45);
+      font-size: 20px; box-shadow: 0 2px 10px rgba(201,148,58,.45);
       flex-shrink: 0;
     }
     .brand-text .name { font-family: var(--font-display); font-size: 15px; font-weight: 700; color: var(--cream); }
@@ -473,7 +473,7 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
       border-left: 3px solid transparent; transition: all .2s;
       user-select: none;
     }
-    .nav-item i { width: 18px; text-align: center; font-size: 14px; }
+    .nav-item i { width: 20px; text-align: center; font-size: 16px; }
     .nav-badge { margin-left: auto; background: var(--red-soft); color: #fff; font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 99px; }
     .nav-item:hover { background: rgba(255,255,255,.06); color: var(--cream); }
     .nav-item.active { background: rgba(201,148,58,.12); color: var(--gold-light); border-left-color: var(--gold); }
@@ -609,7 +609,7 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
 <div id="main">
   <div class="page-strip">
     <div>
-      <h1><i class="fas fa-clock-rotate-left" style="color:var(--gold);font-size:18px;margin-right:8px;"></i>Transaction History</h1>
+      <h1><i class="fas fa-clock-rotate-left" style="color:var(--gold);font-size:22px;margin-right:10px;"></i>Transaction History</h1>
       <div class="sub">Browse every past sale by time period and category</div>
     </div>
   </div>

@@ -693,10 +693,10 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
       border-right: 1px solid rgba(255,255,255,.08);
     }
     .brand-logo {
-      width: 38px; height: 38px; border-radius: 10px;
+      width: 42px; height: 42px; border-radius: 10px;
       background: var(--gold); color: var(--mocha-deep);
       display: flex; align-items: center; justify-content: center;
-      font-size: 18px; box-shadow: 0 2px 10px rgba(201,148,58,.45);
+      font-size: 20px; box-shadow: 0 2px 10px rgba(201,148,58,.45);
       flex-shrink: 0;
     }
     .brand-text .name { font-family: var(--font-display); font-size: 15px; font-weight: 700; color: var(--cream); }
@@ -746,7 +746,7 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
       border-left: 3px solid transparent; transition: all .2s;
       user-select: none;
     }
-    .nav-item i { width: 18px; text-align: center; font-size: 14px; }
+    .nav-item i { width: 20px; text-align: center; font-size: 16px; }
     .nav-item:hover { background: rgba(255,255,255,.06); color: var(--cream); }
     .nav-item.active { background: rgba(201,148,58,.12); color: var(--gold-light); border-left-color: var(--gold); }
     .nav-item.active i { color: var(--gold); }
@@ -892,7 +892,7 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
 <div id="main">
   <div class="page-strip">
     <div>
-      <h1><i class="fas fa-boxes-stacked" style="color:var(--gold);font-size:18px;margin-right:8px;"></i>Products</h1>
+      <h1><i class="fas fa-boxes-stacked" style="color:var(--gold);font-size:22px;margin-right:10px;"></i>Products</h1>
       <div class="sub">Track stock levels, unit costs, and supplier contacts</div>
     </div>
     <div style="display:flex;gap:10px;">

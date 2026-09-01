@@ -419,15 +419,15 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
     }
 
     .brand-logo {
-      width: 38px;
-      height: 38px;
+      width: 42px;
+      height: 42px;
       border-radius: 10px;
       background: var(--gold);
       color: var(--mocha-deep);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 18px;
+      font-size: 20px;
       box-shadow: 0 2px 10px rgba(201, 148, 58, .45);
       flex-shrink: 0;
     }
@@ -596,9 +596,9 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
     }
 
     .nav-item i {
-      width: 18px;
+      width: 20px;
       text-align: center;
-      font-size: 14px;
+      font-size: 16px;
     }
 
     .nav-item:hover {
@@ -711,16 +711,16 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
     }
 
     .kpi-icon {
-      width: 38px;
-      height: 38px;
+      width: 42px;
+      height: 42px;
       border-radius: 9px;
       background: var(--accent-bg, rgba(201, 148, 58, .1));
       color: var(--accent, var(--gold));
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 16px;
-      margin-bottom: 13px;
+      font-size: 18px;
+      margin-bottom: 14px;
     }
 
     .kpi-label {
@@ -1252,7 +1252,7 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
   <div id="main">
     <div class="page-strip">
       <div>
-        <h1><i class="fas fa-chart-bar" style="color:var(--gold);font-size:18px;margin-right:8px;"></i>Sales Reports
+        <h1><i class="fas fa-chart-bar" style="color:var(--gold);font-size:22px;margin-right:10px;"></i>Sales Reports
         </h1>
         <div class="sub">Analyze performance trends across time periods</div>
       </div>

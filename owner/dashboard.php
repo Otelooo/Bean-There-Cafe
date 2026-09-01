@@ -254,15 +254,15 @@ if ($maxMonthlyTotal <= 0) {
     }
 
     .brand-logo {
-      width: 38px;
-      height: 38px;
+      width: 42px;
+      height: 42px;
       border-radius: 10px;
       background: var(--gold);
       color: var(--mocha-deep);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 18px;
+      font-size: 20px;
       box-shadow: 0 2px 10px rgba(201, 148, 58, .45);
       flex-shrink: 0;
     }
@@ -432,9 +432,9 @@ if ($maxMonthlyTotal <= 0) {
     }
 
     .nav-item i {
-      width: 18px;
+      width: 20px;
       text-align: center;
-      font-size: 14px;
+      font-size: 16px;
     }
 
     .nav-item:hover {
@@ -547,20 +547,20 @@ if ($maxMonthlyTotal <= 0) {
     }
 
     .kpi-icon {
-      width: 30px;
-      height: 30px;
+      width: 36px;
+      height: 36px;
       border-radius: 9px;
       background: var(--accent-bg, rgba(201, 148, 58, .1));
       color: var(--accent, var(--gold));
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 13px;
-      margin-bottom: 8px;
+      font-size: 16px;
+      margin-bottom: 10px;
     }
 
     .kpi-label {
-      font-size: 9.5px;
+      font-size: 11px;
       color: #888;
       font-weight: 700;
       letter-spacing: .8px;
@@ -570,14 +570,14 @@ if ($maxMonthlyTotal <= 0) {
 
     .kpi-value {
       font-family: var(--font-display);
-      font-size: 22px;
+      font-size: 27px;
       font-weight: 700;
       color: var(--mocha-deep);
       line-height: 1;
     }
 
     .kpi-sub {
-      font-size: 10.5px;
+      font-size: 12.5px;
       color: #aaa;
       margin-top: 3px;
     }
@@ -1319,7 +1319,7 @@ if ($maxMonthlyTotal <= 0) {
   <div id="main">
     <div class="page-strip">
       <div>
-        <h1><i class="fas fa-chart-line" style="color:var(--gold);font-size:18px;margin-right:8px;"></i>Dashboard</h1>
+        <h1><i class="fas fa-chart-line" style="color:var(--gold);font-size:22px;margin-right:10px;"></i>Dashboard</h1>
         <div class="sub" id="dash-date">Overview — Loading…</div>
       </div>
       <button class="btn-primary" onclick="location.reload()">
