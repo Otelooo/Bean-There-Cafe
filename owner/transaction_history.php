@@ -66,7 +66,7 @@ function build_history_result(mysqli $conn, string $dateFrom, string $dateTill, 
     // No transaction_status filter — this is a historical record, so cancelled sales show too
     // (distinguished by the status pill), unlike Sales Report's revenue-only 'completed' queries.
     $listSql = "SELECT t.transaction_id, t.transaction_date, t.transaction_total, t.transaction_status,
-                       t.payment_method, t.discount, t.notes,
+                       t.payment_method, t.discount, t.amount_tendered, t.amount_change, t.order_type, t.notes,
                        COALESCE(t.cashier_username, u.username, 'Deleted user') AS cashier_name
                 FROM transactions t
                 LEFT JOIN users u ON u.user_id = t.user_id
@@ -140,11 +140,14 @@ function build_history_result(mysqli $conn, string $dateFrom, string $dateTill, 
             'timeLabel' => $dt->format('g:i A'),
             'cashier' => $t['cashier_name'],
             'paymentLabel' => $t['payment_method'] === 'online' ? 'Online' : 'Cash',
+            'orderTypeLabel' => ($t['order_type'] ?? 'dine_in') === 'takeout' ? 'Takeout' : 'Dine-in',
             'status' => $t['transaction_status'],
             'statusLabel' => $t['transaction_status'] === 'completed' ? 'Completed' : 'Cancelled',
             'itemsSummary' => $summaryParts ? implode(', ', $summaryParts) : '—',
             'discount' => round((float)$t['discount'], 2),
             'total' => round((float)$t['transaction_total'], 2),
+            'amountTendered' => round((float)$t['amount_tendered'], 2),
+            'amountChange' => round((float)$t['amount_change'], 2),
             'notes' => $t['notes'],
             'items' => $itemsOut,
         ];
@@ -674,6 +677,9 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
       <div class="txn-summary-row discount" id="txn-detail-discount-row" style="display:none;"><span>Discount</span><span id="txn-detail-discount">-₱0.00</span></div>
       <div class="txn-summary-row total"><span>Total</span><span id="txn-detail-total">₱0.00</span></div>
       <div class="txn-summary-row"><span>Payment Method</span><span id="txn-detail-payment"></span></div>
+      <div class="txn-summary-row"><span>Order Type</span><span id="txn-detail-order-type"></span></div>
+      <div class="txn-summary-row"><span>Amount Tendered</span><span id="txn-detail-tendered">₱0.00</span></div>
+      <div class="txn-summary-row"><span>Change</span><span id="txn-detail-change">₱0.00</span></div>
       <div class="txn-summary-row"><span>Cashier</span><span id="txn-detail-cashier"></span></div>
     </div>
     <div id="txn-detail-notes-row" style="display:none;margin-top:12px;padding:10px 12px;background:var(--cream);border:1px dashed var(--cream-dark);border-radius:8px;font-size:12.5px;color:var(--charcoal-mid);">
@@ -928,6 +934,9 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
     }
     document.getElementById('txn-detail-total').textContent = money(t.total);
     document.getElementById('txn-detail-payment').textContent = t.paymentLabel;
+    document.getElementById('txn-detail-order-type').textContent = t.orderTypeLabel;
+    document.getElementById('txn-detail-tendered').textContent = money(t.amountTendered);
+    document.getElementById('txn-detail-change').textContent = money(t.amountChange);
     document.getElementById('txn-detail-cashier').textContent = t.cashier;
     const notesRow = document.getElementById('txn-detail-notes-row');
     if (t.notes) {

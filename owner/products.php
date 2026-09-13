@@ -238,6 +238,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $isPrepared = $productType === 'prepared';
         $stock = $_POST['stock'] ?? '';
         $cost = $_POST['cost'] ?? '';
+        $allowedSugarLevels = ['0%', '25%', '50%', '75%', '100%'];
+        $sugarLevels = $isPrepared ? [] : array_values(array_intersect($allowedSugarLevels, (array)($_POST['sugar_level_options'] ?? [])));
+        $sugarLevelsJson = $sugarLevels ? json_encode($sugarLevels) : null;
 
         if (!in_array($productType, ['made_to_order', 'prepared'], true)) {
             $msg = 'Please choose a product type.';
@@ -268,8 +271,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 if ($action === 'add') {
-                    $stmt = $conn->prepare('INSERT INTO products (product_name, product_category_id, product_stocks, product_stocks_reference, product_cost, product_selling_price, product_supplier_id, product_type, product_image) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
-                    $stmt->bind_param('siiiddiss', $name, $categoryId, $stockInt, $stockInt, $costVal, $priceVal, $supplierId, $productType, $newImagePath);
+                    $stmt = $conn->prepare('INSERT INTO products (product_name, product_category_id, product_stocks, product_stocks_reference, product_cost, product_selling_price, product_supplier_id, product_type, sugar_level_options, product_image) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+                    $stmt->bind_param('siiiddisss', $name, $categoryId, $stockInt, $stockInt, $costVal, $priceVal, $supplierId, $productType, $sugarLevelsJson, $newImagePath);
                     $stmt->execute();
                     $newProductId = (int)$stmt->insert_id;
                     $stmt->close();
@@ -290,14 +293,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $oldImage = $oldStmt->get_result()->fetch_assoc()['product_image'] ?? null;
                         $oldStmt->close();
 
-                        $stmt = $conn->prepare('UPDATE products SET product_name = ?, product_category_id = ?, product_stocks = ?, product_stocks_reference = ?, product_cost = ?, product_selling_price = ?, product_supplier_id = ?, product_type = ?, product_image = ? WHERE product_id = ?');
-                        $stmt->bind_param('siiiddissi', $name, $categoryId, $stockInt, $stockInt, $costVal, $priceVal, $supplierId, $productType, $newImagePath, $productId);
+                        $stmt = $conn->prepare('UPDATE products SET product_name = ?, product_category_id = ?, product_stocks = ?, product_stocks_reference = ?, product_cost = ?, product_selling_price = ?, product_supplier_id = ?, product_type = ?, sugar_level_options = ?, product_image = ? WHERE product_id = ?');
+                        $stmt->bind_param('siiiddisssi', $name, $categoryId, $stockInt, $stockInt, $costVal, $priceVal, $supplierId, $productType, $sugarLevelsJson, $newImagePath, $productId);
                         $stmt->execute();
                         $stmt->close();
                         delete_product_image_file($oldImage);
                     } else {
-                        $stmt = $conn->prepare('UPDATE products SET product_name = ?, product_category_id = ?, product_stocks = ?, product_stocks_reference = ?, product_cost = ?, product_selling_price = ?, product_supplier_id = ?, product_type = ? WHERE product_id = ?');
-                        $stmt->bind_param('siiiddisi', $name, $categoryId, $stockInt, $stockInt, $costVal, $priceVal, $supplierId, $productType, $productId);
+                        $stmt = $conn->prepare('UPDATE products SET product_name = ?, product_category_id = ?, product_stocks = ?, product_stocks_reference = ?, product_cost = ?, product_selling_price = ?, product_supplier_id = ?, product_type = ?, sugar_level_options = ? WHERE product_id = ?');
+                        $stmt->bind_param('siiiddissi', $name, $categoryId, $stockInt, $stockInt, $costVal, $priceVal, $supplierId, $productType, $sugarLevelsJson, $productId);
                         $stmt->execute();
                         $stmt->close();
                     }
@@ -596,7 +599,7 @@ while ($row = $variantResult->fetch_assoc()) {
 $products = [];
 $prodResult = $conn->query('
     SELECT p.product_id, p.product_name, p.product_stocks, p.product_stocks_reference, p.product_cost, p.product_selling_price,
-           p.product_category_id, pc.product_category, p.product_image, p.product_type, s.supplier_name, s.supplier_contact
+           p.product_category_id, pc.product_category, p.product_image, p.product_type, p.sugar_level_options, s.supplier_name, s.supplier_contact
     FROM products p
     JOIN product_category pc ON pc.product_category_id = p.product_category_id
     JOIN product_supplier s ON s.product_supplier_id = p.product_supplier_id
@@ -613,6 +616,7 @@ while ($row = $prodResult->fetch_assoc()) {
         'category_name' => $row['product_category'],
         'tag_class' => category_tag_class($row['product_category']),
         'type' => $row['product_type'],
+        'sugar_levels' => json_decode($row['sugar_level_options'] ?? '[]', true) ?: [],
         'stock' => $stock,
         'level' => stock_level($stock, $reference, $criticalStockThreshold, $lowStockThreshold),
         'cost' => (float)$row['product_cost'],
@@ -967,6 +971,12 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
 
       <div id="add-madetoorder-fields" style="display:none;">
         <div class="modal-field">
+          <label>Sugar Level Options <span style="text-transform:none;font-weight:400;">(optional)</span></label>
+          <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;">
+            <?php foreach (['0%', '25%', '50%', '75%', '100%'] as $level): ?><label style="font-size:12px;text-transform:none;font-weight:400;"><input type="checkbox" name="sugar_level_options[]" value="<?= $level ?>"> <?= $level ?></label><?php endforeach; ?>
+          </div>
+        </div>
+        <div class="modal-field">
           <label>Ingredients Needed</label>
           <div id="add-ingredient-rows"></div>
           <button type="button" class="btn-outline" style="margin-top:6px;" onclick="addIngredientRow('add-ingredient-rows')"><i class="fas fa-plus"></i> Add Ingredient</button>
@@ -1066,6 +1076,12 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
       </div>
 
       <div id="edit-madetoorder-fields" style="display:none;">
+        <div class="modal-field">
+          <label>Sugar Level Options <span style="text-transform:none;font-weight:400;">(optional)</span></label>
+          <div id="edit-sugar-level-options" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px;">
+            <?php foreach (['0%', '25%', '50%', '75%', '100%'] as $level): ?><label style="font-size:12px;text-transform:none;font-weight:400;"><input type="checkbox" name="sugar_level_options[]" value="<?= $level ?>"> <?= $level ?></label><?php endforeach; ?>
+          </div>
+        </div>
         <div class="modal-field">
           <label>Ingredients Needed</label>
           <div id="edit-ingredient-rows"></div>
@@ -1343,6 +1359,7 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
     document.getElementById('edit-cost').value = p.cost;
     document.getElementById('edit-supplier-name').value = p.type === 'prepared' ? p.supplier_name : '';
     document.getElementById('edit-supplier-contact').value = p.type === 'prepared' ? p.supplier_contact : '';
+    document.querySelectorAll('#edit-sugar-level-options input').forEach(input => { input.checked = (p.sugar_levels || []).includes(input.value); });
 
     const ingredientRows = document.getElementById('edit-ingredient-rows');
     ingredientRows.innerHTML = '';

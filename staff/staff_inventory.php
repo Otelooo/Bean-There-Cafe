@@ -18,20 +18,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $name = trim($_POST['name'] ?? '');
         $stock = $_POST['stock'] ?? '';
         $unit = trim($_POST['unit'] ?? '');
+        $code = strtoupper(trim($_POST['ingredient_code'] ?? ''));
         $supplier = trim($_POST['supplier_name'] ?? '');
         $contact = trim($_POST['supplier_contact'] ?? '');
+        $restockDetails = trim($_POST['restock_delivery_details'] ?? '');
 
-        if ($name === '' || !is_numeric($stock) || (float)$stock < 0 || $unit === '') {
+        if ($name === '' || !preg_match('/^[A-Z0-9-]{1,50}$/', $code) || !is_numeric($stock) || (float)$stock < 0 || $unit === '') {
             $msg = 'Please fill in all fields with valid values.';
             $msgType = 'warn';
         } else {
             $stockVal = (float)$stock;
             $supplierVal = $supplier !== '' ? $supplier : null;
             $contactVal = $contact !== '' ? $contact : null;
+            $restockDetailsVal = $restockDetails !== '' ? $restockDetails : null;
 
-            if ($action === 'add') {
-                $stmt = $conn->prepare('INSERT INTO product_ingredients (ingredient_name, ingredient_stock, ingredient_stock_reference, ingredient_unit, ingredient_supplier, ingredient_contact) VALUES (?, ?, ?, ?, ?, ?)');
-                $stmt->bind_param('sddsss', $name, $stockVal, $stockVal, $unit, $supplierVal, $contactVal);
+            $currentIngredientId = $action === 'edit' ? (int)($_POST['ingredient_id'] ?? 0) : 0;
+            $codeCheck = $conn->prepare('SELECT product_ingredients_id FROM product_ingredients WHERE ingredient_code = ? AND product_ingredients_id <> ? LIMIT 1');
+            $codeCheck->bind_param('si', $code, $currentIngredientId);
+            $codeCheck->execute();
+            $codeAlreadyUsed = (bool)$codeCheck->get_result()->fetch_assoc();
+            $codeCheck->close();
+
+            if ($codeAlreadyUsed) {
+                $msg = 'That ingredient code is already in use.';
+                $msgType = 'warn';
+            } elseif ($action === 'add') {
+                $stmt = $conn->prepare('INSERT INTO product_ingredients (ingredient_code, ingredient_name, ingredient_stock, ingredient_stock_reference, ingredient_unit, ingredient_supplier, ingredient_contact, restock_delivery_details) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+                $stmt->bind_param('ssddssss', $code, $name, $stockVal, $stockVal, $unit, $supplierVal, $contactVal, $restockDetailsVal);
                 $stmt->execute();
                 $stmt->close();
                 $msg = 'Ingredient added.';
@@ -41,8 +54,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $msg = 'Invalid ingredient.';
                     $msgType = 'warn';
                 } else {
-                    $stmt = $conn->prepare('UPDATE product_ingredients SET ingredient_name = ?, ingredient_stock = ?, ingredient_stock_reference = ?, ingredient_unit = ?, ingredient_supplier = ?, ingredient_contact = ? WHERE product_ingredients_id = ?');
-                    $stmt->bind_param('sddsssi', $name, $stockVal, $stockVal, $unit, $supplierVal, $contactVal, $ingredientId);
+                    $stmt = $conn->prepare('UPDATE product_ingredients SET ingredient_code = ?, ingredient_name = ?, ingredient_stock = ?, ingredient_stock_reference = ?, ingredient_unit = ?, ingredient_supplier = ?, ingredient_contact = ?, restock_delivery_details = ? WHERE product_ingredients_id = ?');
+                    $stmt->bind_param('ssddssssi', $code, $name, $stockVal, $stockVal, $unit, $supplierVal, $contactVal, $restockDetailsVal, $ingredientId);
                     $stmt->execute();
                     $stmt->close();
                     $msg = 'Ingredient updated.';
@@ -91,7 +104,7 @@ $displayName = $_SESSION['username'] ?? 'Staff';
 $initials = strtoupper(substr($displayName, 0, 2));
 
 $ingredients = [];
-$result = $conn->query('SELECT product_ingredients_id, ingredient_name, ingredient_stock, ingredient_stock_reference, ingredient_unit, ingredient_supplier, ingredient_contact FROM product_ingredients ORDER BY ingredient_name');
+$result = $conn->query('SELECT product_ingredients_id, ingredient_code, ingredient_name, ingredient_stock, ingredient_stock_reference, ingredient_unit, ingredient_supplier, ingredient_contact, restock_delivery_details, ingredient_updated_at FROM product_ingredients ORDER BY ingredient_name');
 while ($row = $result->fetch_assoc()) {
     $stock = (float)$row['ingredient_stock'];
     $reference = $row['ingredient_stock_reference'] !== null ? (float)$row['ingredient_stock_reference'] : null;
@@ -101,12 +114,15 @@ while ($row = $result->fetch_assoc()) {
     $unitKey = normalize_unit_key($row['ingredient_unit']);
     $ingredients[] = [
         'id' => (int)$row['product_ingredients_id'],
+        'code' => $row['ingredient_code'] ?? '',
         'name' => $row['ingredient_name'],
         'stock' => $stock,
         'unit' => $unitKey ?? $row['ingredient_unit'],
         'unit_label' => $unitKey ? unit_label($unitKey) : $row['ingredient_unit'],
         'supplier' => $row['ingredient_supplier'] ?? '',
         'contact' => $row['ingredient_contact'] ?? '',
+        'restock_details' => $row['restock_delivery_details'] ?? '',
+        'updated_at' => $row['ingredient_updated_at'] ?? '',
         'level' => ingredient_stock_level($stock, $reference, $criticalStockThreshold, $lowStockThreshold),
     ];
 }
@@ -302,8 +318,9 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
     .modal-sub   { font-size:13px; color:#888; margin-bottom:18px; }
     .modal-field { margin-bottom:14px; }
     .modal-field label { display:block; font-size:11px; font-weight:700; letter-spacing:.6px; text-transform:uppercase; color:#888; margin-bottom:5px; }
-    .modal-field input, .modal-field select { width:100%; padding:9px 13px; border-radius:8px; border:1.5px solid var(--cream-dark); background:var(--cream); font-family:var(--font-body); font-size:13px; color:var(--charcoal); outline:none; transition:border-color .2s; }
-    .modal-field input:focus, .modal-field select:focus { border-color:var(--mocha); }
+    .modal-field input, .modal-field select, .modal-field textarea { width:100%; padding:9px 13px; border-radius:8px; border:1.5px solid var(--cream-dark); background:var(--cream); font-family:var(--font-body); font-size:13px; color:var(--charcoal); outline:none; transition:border-color .2s; }
+    .modal-field textarea { resize:vertical; }
+    .modal-field input:focus, .modal-field select:focus, .modal-field textarea:focus { border-color:var(--mocha); }
     .btn-modal-primary { width:100%; padding:12px; background:var(--mocha); color:var(--cream); border:none; border-radius:var(--radius); font-family:var(--font-body); font-size:14px; font-weight:700; cursor:pointer; transition:all .2s; }
     .btn-modal-primary:hover { background:var(--mocha-mid); }
     .btn-modal-cancel { width:100%; padding:9px; margin-top:7px; background:transparent; color:#bbb; border:1.5px solid var(--cream-dark); border-radius:8px; font-family:var(--font-body); font-size:13px; cursor:pointer; transition:all .2s; }
@@ -370,7 +387,7 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
     </div>
     <div class="table-wrap">
       <table class="data-table">
-        <thead><tr><th>Ingredient</th><th>Stock</th><th>Unit</th><th>Supplier</th><th>Contact</th><th>Status</th><th>Actions</th></tr></thead>
+        <thead><tr><th>Code</th><th>Ingredient</th><th>Stock</th><th>Unit</th><th>Supplier</th><th>Contact</th><th>Last Restock / Delivery</th><th>Last Updated</th><th>Status</th><th>Actions</th></tr></thead>
         <tbody id="ing-tbody"></tbody>
       </table>
     </div>
@@ -392,6 +409,7 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
           <?php endforeach; ?>
         </datalist>
       </div>
+      <div class="modal-field"><label>Ingredient Code</label><input type="text" name="ingredient_code" maxlength="50" pattern="[A-Za-z0-9-]+" placeholder="e.g. BEAN-001" required /></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
         <div class="modal-field"><label>Stock Quantity</label><input type="number" name="stock" min="0" step="0.01" placeholder="0" required /></div>
         <div class="modal-field"><label>Unit</label>
@@ -409,6 +427,7 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
       </div>
       <div class="modal-field"><label>Supplier Name</label><input type="text" name="supplier_name" placeholder="Supplier company" /></div>
       <div class="modal-field"><label>Supplier Contact</label><input type="text" name="supplier_contact" placeholder="09XX-XXX-XXXX" /></div>
+      <div class="modal-field"><label>Last Restock / Delivery Details</label><textarea name="restock_delivery_details" rows="2" maxlength="1000" placeholder="e.g. Delivered by ABC Supplies, 10 bags received."></textarea></div>
       <button type="submit" class="btn-modal-primary"><i class="fas fa-check" style="margin-right:6px;"></i>Add Ingredient</button>
       <button type="button" class="btn-modal-cancel" onclick="closeModal('modal-add-item')">Cancel</button>
     </form>
@@ -423,6 +442,7 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
       <input type="hidden" name="action" value="edit">
       <input type="hidden" name="ingredient_id" id="edit-ingredient-id" value="" />
       <div class="modal-field"><label>Ingredient Name</label><input type="text" name="name" id="edit-name" required /></div>
+      <div class="modal-field"><label>Ingredient Code</label><input type="text" name="ingredient_code" id="edit-ingredient-code" maxlength="50" pattern="[A-Za-z0-9-]+" required /></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
         <div class="modal-field"><label>Stock Quantity</label><input type="number" name="stock" id="edit-stock" min="0" step="0.01" required /></div>
         <div class="modal-field"><label>Unit</label>
@@ -440,6 +460,7 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
       </div>
       <div class="modal-field"><label>Supplier Name</label><input type="text" name="supplier_name" id="edit-supplier-name" /></div>
       <div class="modal-field"><label>Supplier Contact</label><input type="text" name="supplier_contact" id="edit-supplier-contact" /></div>
+      <div class="modal-field"><label>Last Restock / Delivery Details</label><textarea name="restock_delivery_details" id="edit-restock-details" rows="2" maxlength="1000"></textarea></div>
       <button type="submit" class="btn-modal-primary"><i class="fas fa-check" style="margin-right:6px;"></i>Save Changes</button>
       <button type="button" class="btn-modal-cancel" onclick="closeModal('modal-edit-item')">Cancel</button>
     </form>
@@ -483,28 +504,31 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
     if (!tbody) return;
 
     if (ingredients.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#aaa;padding:24px 8px;">No ingredients yet. Click "Add Ingredient" to add your first item.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#aaa;padding:24px 8px;">No ingredients yet. Click "Add Ingredient" to add your first item.</td></tr>';
       return;
     }
 
     const filtered = ingredients.filter(i => {
-      const s = !search || i.name.toLowerCase().includes(search.toLowerCase());
+      const s = !search || i.name.toLowerCase().includes(search.toLowerCase()) || i.code.toLowerCase().includes(search.toLowerCase());
       const l = !level || i.level === level;
       return s && l;
     });
 
     if (filtered.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#aaa;padding:24px 8px;">No ingredients match your filters.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#aaa;padding:24px 8px;">No ingredients match your filters.</td></tr>';
       return;
     }
 
     tbody.innerHTML = filtered.map(i => `
       <tr>
+        <td class="text-mono">${i.code || '<span class="text-muted">—</span>'}</td>
         <td style="font-weight:600;">${i.name}</td>
         <td><div class="stock-indicator stock-${i.level}"><div class="stock-dot"></div>${qty(i.stock)}</div></td>
         <td class="text-mono">${i.unit_label}</td>
         <td>${i.supplier ? i.supplier : '<span class="text-muted">—</span>'}</td>
         <td class="text-mono" style="font-size:12px;">${i.contact ? i.contact : '<span class="text-muted">—</span>'}</td>
+        <td title="${i.restock_details}">${i.restock_details ? i.restock_details.slice(0, 55) + (i.restock_details.length > 55 ? '…' : '') : '<span class="text-muted">—</span>'}</td>
+        <td class="text-mono" style="font-size:11px;">${i.updated_at || '<span class="text-muted">—</span>'}</td>
         <td><span class="status-pill ${i.level === 'ok' ? 'pill-success' : i.level === 'low' ? 'pill-warn' : 'pill-red'}">${levelLabels[i.level]}</span></td>
         <td style="display:flex;gap:6px;align-items:center;">
           <button class="tbl-btn tbl-btn-edit" onclick="openEditModal(${i.id})">Edit</button>
@@ -530,10 +554,12 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
     if (!i) return;
     document.getElementById('edit-ingredient-id').value = i.id;
     document.getElementById('edit-name').value = i.name;
+    document.getElementById('edit-ingredient-code').value = i.code;
     document.getElementById('edit-stock').value = i.stock;
     document.getElementById('edit-unit').value = i.unit;
     document.getElementById('edit-supplier-name').value = i.supplier;
     document.getElementById('edit-supplier-contact').value = i.contact;
+    document.getElementById('edit-restock-details').value = i.restock_details;
     openModal('modal-edit-item');
   }
 

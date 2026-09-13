@@ -47,7 +47,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         $flavorId = ($flavorRaw !== null && $flavorRaw !== '') ? (int)$flavorRaw : null;
         $variantRaw = $line['variant_id'] ?? null;
         $variantId = ($variantRaw !== null && $variantRaw !== '') ? (int)$variantRaw : null;
-        $cartLines[] = ['product_id' => $pid, 'qty' => $qty, 'flavor_ingredient_id' => $flavorId, 'variant_id' => $variantId];
+        $sugarLevel = trim((string)($line['sugar_level'] ?? ''));
+        $cartLines[] = ['product_id' => $pid, 'qty' => $qty, 'flavor_ingredient_id' => $flavorId, 'variant_id' => $variantId, 'sugar_level' => $sugarLevel !== '' ? $sugarLevel : null];
         $totalQtyByProduct[$pid] = ($totalQtyByProduct[$pid] ?? 0) + $qty;
     }
 
@@ -56,7 +57,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         $ids = array_keys($totalQtyByProduct);
         $placeholders = implode(',', array_fill(0, count($ids), '?'));
         $types = str_repeat('i', count($ids));
-        $stmt = $conn->prepare("SELECT product_id, product_name, product_selling_price, product_stocks, product_type FROM products WHERE product_id IN ($placeholders) FOR UPDATE");
+        $stmt = $conn->prepare("SELECT product_id, product_name, product_selling_price, product_stocks, product_type, sugar_level_options FROM products WHERE product_id IN ($placeholders) FOR UPDATE");
         $stmt->bind_param($types, ...$ids);
         $stmt->execute();
         $result = $stmt->get_result();
@@ -191,6 +192,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
                 throw new RuntimeException('Please choose a flavor for ' . $product['product_name'] . '.');
             }
 
+            $allowedSugarLevels = json_decode($product['sugar_level_options'] ?? '[]', true) ?: [];
+            $chosenSugarLevel = $line['sugar_level'];
+            if ($allowedSugarLevels && !in_array($chosenSugarLevel, $allowedSugarLevels, true)) {
+                throw new RuntimeException('Please choose a sugar level for ' . $product['product_name'] . '.');
+            }
+            if (!$allowedSugarLevels && $chosenSugarLevel !== null) {
+                throw new RuntimeException('Invalid sugar level selected for ' . $product['product_name'] . '.');
+            }
+
             $lineItems[] = [
                 'product_id' => $pid,
                 'product_name' => $product['product_name'],
@@ -199,6 +209,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
                 'subtotal' => $subtotal,
                 'chosen_ingredient_name' => $chosenIngredientName,
                 'chosen_variant_name' => $chosenVariantName,
+                'chosen_sugar_level' => $chosenSugarLevel,
             ];
         }
 
@@ -228,27 +239,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         $discountAmount = round($grossTotal * $discountRate, 2);
         $finalTotal = round($grossTotal - $discountAmount, 2);
 
+        // Payment figures are calculated again on the server.  This keeps the stored
+        // tender/change values in sync with the authoritative total rather than trusting
+        // the receipt preview in the browser.
+        if ($paymentMethod === 'online') {
+            $amountTendered = $finalTotal;
+        } else {
+            $amountTenderedRaw = $_POST['amount_tendered'] ?? '';
+            if (!is_numeric($amountTenderedRaw)) {
+                throw new RuntimeException('Enter the amount tendered.');
+            }
+            $amountTendered = round((float)$amountTenderedRaw, 2);
+            if ($amountTendered < $finalTotal) {
+                throw new RuntimeException('Amount tendered is insufficient.');
+            }
+        }
+        // max() guarantees an exact payment is always recorded as 0.00, never a negative
+        // floating-point residue.
+        $amountChange = max(0, round($amountTendered - $finalTotal, 2));
+
         $userId = (int)$_SESSION['user_id'];
         $cashierUsername = $_SESSION['username'] ?? '';
+        $orderType = $_POST['order_type'] ?? 'dine_in';
+        if (!in_array($orderType, ['dine_in', 'takeout'], true)) {
+            $orderType = 'dine_in';
+        }
+        $tableNumberRaw = trim($_POST['table_number'] ?? '');
+        $tableNumber = null;
+        if ($tableNumberRaw !== '') {
+            if (filter_var($tableNumberRaw, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 999]]) === false) {
+                throw new RuntimeException('Table number must be between 1 and 999.');
+            }
+            $tableNumber = (int)$tableNumberRaw;
+        }
         $notes = trim($_POST['notes'] ?? '');
         $notes = $notes !== '' ? $notes : null;
         // Snapshot of exactly what was deducted per ingredient, so a later cancellation can restore
         // stock precisely even if the recipe (product_ingredient_items) has changed since this sale.
         $ingredientUsageSnapshot = json_encode($ingredientNeeds);
-        $insertTxn = $conn->prepare("INSERT INTO transactions (user_id, cashier_username, transaction_date, transaction_total, transaction_status, payment_method, discount, notes, ingredient_usage_snapshot) VALUES (?, ?, NOW(), ?, 'completed', ?, ?, ?, ?)");
-        $insertTxn->bind_param('isdsdss', $userId, $cashierUsername, $finalTotal, $paymentMethod, $discountAmount, $notes, $ingredientUsageSnapshot);
+        $insertTxn = $conn->prepare("INSERT INTO transactions (user_id, cashier_username, transaction_date, transaction_total, transaction_status, payment_method, discount, amount_tendered, amount_change, order_type, table_number, notes, ingredient_usage_snapshot) VALUES (?, ?, NOW(), ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?)");
+        $insertTxn->bind_param('isdsdddsiss', $userId, $cashierUsername, $finalTotal, $paymentMethod, $discountAmount, $amountTendered, $amountChange, $orderType, $tableNumber, $notes, $ingredientUsageSnapshot);
         $insertTxn->execute();
         $transactionId = $insertTxn->insert_id;
         $insertTxn->close();
 
         // product_name_snapshot / chosen_ingredient_name_snapshot / variant_name_snapshot preserve
         // what was actually sold even if the product, ingredient, or size/option is deleted later.
-        $insertItem = $conn->prepare('INSERT INTO transaction_items (transaction_id, product_id, product_name_snapshot, chosen_ingredient_name_snapshot, variant_name_snapshot, quantity, unit_price, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+        $insertItem = $conn->prepare('INSERT INTO transaction_items (transaction_id, product_id, product_name_snapshot, chosen_ingredient_name_snapshot, variant_name_snapshot, sugar_level_snapshot, quantity, unit_price, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
         // Only "prepared" products track their own stock; made-to-order items have no product_stocks
         // to decrement (their ingredient stock is decremented below instead).
         $updateStock = $conn->prepare("UPDATE products SET product_stocks = product_stocks - ? WHERE product_id = ? AND product_type = 'prepared'");
         foreach ($lineItems as $item) {
-            $insertItem->bind_param('iisssidd', $transactionId, $item['product_id'], $item['product_name'], $item['chosen_ingredient_name'], $item['chosen_variant_name'], $item['quantity'], $item['unit_price'], $item['subtotal']);
+            $insertItem->bind_param('iissssidd', $transactionId, $item['product_id'], $item['product_name'], $item['chosen_ingredient_name'], $item['chosen_variant_name'], $item['chosen_sugar_level'], $item['quantity'], $item['unit_price'], $item['subtotal']);
             $insertItem->execute();
 
             $updateStock->bind_param('ii', $item['quantity'], $item['product_id']);
@@ -390,7 +432,7 @@ while ($row = $variantResult->fetch_assoc()) {
 
 $products = [];
 $prodResult = $conn->query('
-    SELECT p.product_id, p.product_name, p.product_selling_price, p.product_stocks, p.product_category_id, pc.product_category, p.product_image, p.product_type
+    SELECT p.product_id, p.product_name, p.product_selling_price, p.product_stocks, p.product_category_id, pc.product_category, p.product_image, p.product_type, p.sugar_level_options
     FROM products p
     JOIN product_category pc ON pc.product_category_id = p.product_category_id
     ORDER BY pc.product_category, p.product_name
@@ -403,6 +445,7 @@ while ($row = $prodResult->fetch_assoc()) {
         'price' => (float)$row['product_selling_price'],
         'stock' => (int)$row['product_stocks'],
         'type' => $row['product_type'],
+        'sugar_levels' => json_decode($row['sugar_level_options'] ?? '[]', true) ?: [],
         'category_id' => (int)$row['product_category_id'],
         'category_name' => $row['product_category'],
         'image' => $row['product_image'] ? '../' . $row['product_image'] : null,
@@ -1325,6 +1368,19 @@ while ($row = $prodResult->fetch_assoc()) {
       display: flex;
     }
 
+    @media print {
+      /* 80 mm wide portrait receipt paper. printReceipt() sets the exact page height. */
+      @page { size: 80mm 297mm; margin: 0; }
+      body * { visibility: hidden !important; }
+      #receipt-modal, #receipt-modal * { visibility: visible !important; }
+      #receipt-modal { position: static !important; display: block !important; background: #fff !important; }
+      #receipt-modal .modal-box { box-sizing: border-box !important; width: 80mm !important; max-width: 80mm !important; max-height: none !important; overflow: visible !important; padding: 3mm !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; animation: none !important; color: #000 !important; break-inside: avoid !important; page-break-inside: avoid !important; }
+      #receipt-back-row, #receipt-confirm-btn, #receipt-done-btn, #receipt-cancel-sale-btn, #receipt-print-btn { display: none !important; }
+    }
+
+    /* Lets JavaScript measure the final receipt before setting its one-page print height. */
+    #receipt-modal .modal-box.receipt-print-measure { box-sizing: border-box; width: 80mm; max-width: 80mm; max-height: none; overflow: visible; padding: 3mm; }
+
     .modal-box {
       background: var(--cream-light);
       border-radius: var(--radius-lg);
@@ -1692,6 +1748,19 @@ while ($row = $prodResult->fetch_assoc()) {
           </div>
         </div>
       </div>
+      <div id="sugar-choice-modal" class="modal-overlay">
+        <div class="modal-box" style="max-width: 360px;">
+          <div class="modal-header">
+            <h2 class="modal-title" id="sugar-choice-title">Choose a sugar level</h2>
+            <button class="modal-close" onclick="closeSugarPicker()">&times;</button>
+          </div>
+          <div id="sugar-choice-list" style="margin: 16px 0;"></div>
+          <div class="modal-actions">
+            <button class="btn-cancel" onclick="closeSugarPicker()">Cancel</button>
+            <button class="btn-confirm" onclick="confirmSugarChoice()">Add to Cart</button>
+          </div>
+        </div>
+      </div>
       <div id="receipt-modal" class="modal-overlay">
         <div class="modal-box" style="max-width: 400px; border: 2px dashed var(--cream-dark);">
           <div id="receipt-back-row" style="display:none; margin-bottom:14px;">
@@ -1720,6 +1789,7 @@ while ($row = $prodResult->fetch_assoc()) {
               </p>
             <?php endif; ?>
             <button id="receipt-confirm-btn" class="btn-confirm" style="margin-top: 15px; width: 100%; display:none;" onclick="finalizeCheckout()">Confirm & Complete Sale</button>
+            <button id="receipt-print-btn" class="btn-confirm" style="margin-top: 8px; width: 100%; display:none;" onclick="printReceipt()"><i class="fas fa-print" style="margin-right:6px;"></i>Print Receipt</button>
             <button id="receipt-done-btn" class="btn-confirm" style="margin-top: 15px; width: 100%;" onclick="requestNewSale()">Done & New
               Sale</button>
             <button id="receipt-cancel-sale-btn" class="btn-cancel" style="margin-top: 8px; width: 100%; display:none;" onclick="requestCancelThisSale()"><i class="fas fa-ban" style="margin-right:6px;"></i>Cancel This Sale</button>
@@ -1785,6 +1855,17 @@ while ($row = $prodResult->fetch_assoc()) {
             <div id="change-preview" class="change-preview"></div>
           </div>
           <div class="notes-section">
+            <h4 style="font-family: var(--font-display); font-size: 16px; color: var(--mocha-deep); margin-bottom: 12px; display:flex; align-items:center; gap:8px;"><i class="fas fa-utensils" style="color:var(--gold);"></i>Order Type</h4>
+            <select id="checkout-order-type" style="width:100%;padding:10px 13px;border-radius:8px;border:1.5px solid var(--cream-dark);background:var(--cream-light);font-family:var(--font-body);font-size:13px;color:var(--charcoal);outline:none;">
+              <option value="dine_in">Dine-in</option>
+              <option value="takeout">Takeout</option>
+            </select>
+          </div>
+          <div class="notes-section">
+            <h4 style="font-family: var(--font-display); font-size: 16px; color: var(--mocha-deep); margin-bottom: 12px; display:flex; align-items:center; gap:8px;"><i class="fas fa-chair" style="color:var(--gold);"></i>Table Number <span style="font-size:12px;color:#aaa;font-weight:400;">(optional)</span></h4>
+            <input type="number" id="checkout-table-number" min="1" max="999" step="1" placeholder="e.g. 12" style="width:100%;padding:10px 13px;border-radius:8px;border:1.5px solid var(--cream-dark);background:var(--cream-light);font-family:var(--font-body);font-size:13px;color:var(--charcoal);outline:none;">
+          </div>
+          <div class="notes-section">
             <h4
               style="font-family: var(--font-display); font-size: 16px; color: var(--mocha-deep); margin-bottom: 12px; display:flex; align-items:center; gap:8px;">
               <i class="fas fa-note-sticky" style="color:var(--gold);"></i>Notes <span style="font-size:12px;color:#aaa;font-weight:400;">(optional)</span></h4>
@@ -1819,6 +1900,7 @@ while ($row = $prodResult->fetch_assoc()) {
           let label = item.name;
           if (item.variant_name) label += ' — ' + item.variant_name;
           if (item.flavor_name) label += ' (' + item.flavor_name + ')';
+          if (item.sugar_level) label += ' — ' + item.sugar_level + ' sugar';
           return label;
         }
         // Same label with styled spans, for the cart line-item list.
@@ -1826,6 +1908,7 @@ while ($row = $prodResult->fetch_assoc()) {
           let html = item.name;
           if (item.variant_name) html += ` <span style="color:var(--gold);font-weight:600;">— ${item.variant_name}</span>`;
           if (item.flavor_name) html += ` <span style="color:#aaa;font-weight:400;">(${item.flavor_name})</span>`;
+          if (item.sugar_level) html += ` <span style="color:#8b6b4e;font-weight:600;">— ${item.sugar_level} sugar</span>`;
           return html;
         }
         let cart = [];
@@ -1923,6 +2006,10 @@ while ($row = $prodResult->fetch_assoc()) {
         }
         let pendingFlavorProduct = null;
         let pendingFlavorVariant = null;
+        let pendingSugarProduct = null;
+        let pendingSugarFlavorId = null;
+        let pendingSugarFlavorName = null;
+        let pendingSugarVariant = null;
         let pendingSizeProduct = null;
         function addToCart(id) {
           const product = products.find(p => p.id === id);
@@ -1940,7 +2027,7 @@ while ($row = $prodResult->fetch_assoc()) {
             openFlavorPicker(product, variant);
             return;
           }
-          addToCartFinal(product, null, null, variant);
+          proceedAfterFlavor(product, null, null, variant);
         }
         function openSizePicker(product) {
           pendingSizeProduct = product;
@@ -1991,17 +2078,40 @@ while ($row = $prodResult->fetch_assoc()) {
           if (!selected || !pendingFlavorProduct) return;
           const opt = pendingFlavorProduct.flavor_options.find(o => String(o.id) === selected.value);
           if (!opt) return;
-          addToCartFinal(pendingFlavorProduct, opt.id, opt.name, pendingFlavorVariant);
+          proceedAfterFlavor(pendingFlavorProduct, opt.id, opt.name, pendingFlavorVariant);
           closeFlavorPicker();
         }
-        function addToCartFinal(product, flavorId, flavorName, variant = null) {
+        function proceedAfterFlavor(product, flavorId, flavorName, variant) {
+          if (product.sugar_levels && product.sugar_levels.length > 0) {
+            openSugarPicker(product, flavorId, flavorName, variant);
+            return;
+          }
+          addToCartFinal(product, flavorId, flavorName, variant, null);
+        }
+        function openSugarPicker(product, flavorId, flavorName, variant) {
+          pendingSugarProduct = product; pendingSugarFlavorId = flavorId; pendingSugarFlavorName = flavorName; pendingSugarVariant = variant;
+          document.getElementById('sugar-choice-title').textContent = 'Choose a sugar level for ' + product.name;
+          document.getElementById('sugar-choice-list').innerHTML = product.sugar_levels.map((level, i) => `<label style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--cream-dark);cursor:pointer;font-size:14px;"><input type="radio" name="sugar-choice" value="${level}" ${i === 0 ? 'checked' : ''} /><span>${level} sugar</span></label>`).join('');
+          document.getElementById('sugar-choice-modal').classList.add('show');
+        }
+        function closeSugarPicker() {
+          document.getElementById('sugar-choice-modal').classList.remove('show');
+          pendingSugarProduct = null; pendingSugarFlavorId = null; pendingSugarFlavorName = null; pendingSugarVariant = null;
+        }
+        function confirmSugarChoice() {
+          const selected = document.querySelector('input[name="sugar-choice"]:checked');
+          if (!selected || !pendingSugarProduct) return;
+          addToCartFinal(pendingSugarProduct, pendingSugarFlavorId, pendingSugarFlavorName, pendingSugarVariant, selected.value);
+          closeSugarPicker();
+        }
+        function addToCartFinal(product, flavorId, flavorName, variant = null, sugarLevel = null) {
           const variantId = variant ? variant.id : null;
           const variantName = variant ? variant.name : null;
           const effectivePrice = variant ? variant.price : product.price;
           // A product sold with different sizes and/or flavors needs separate cart lines so
           // quantities and stock checks don't get mixed between them — stock itself is still one
           // shared pool per product, only the price and label differ per line.
-          const cartKey = [product.id, variantId, flavorId].filter(v => v !== null && v !== undefined).join(':');
+          const cartKey = [product.id, variantId, flavorId, sugarLevel].filter(v => v !== null && v !== undefined).join(':');
           const item = cart.find(i => i.cartKey === cartKey);
           const currentQty = item ? item.qty : 0;
           if (product.type !== 'made_to_order' && currentQty >= product.stock) {
@@ -2009,7 +2119,7 @@ while ($row = $prodResult->fetch_assoc()) {
             return;
           }
           if (item) item.qty++;
-          else cart.push({ ...product, price: effectivePrice, qty: 1, cartKey, flavor_ingredient_id: flavorId, flavor_name: flavorName, variant_id: variantId, variant_name: variantName });
+          else cart.push({ ...product, price: effectivePrice, qty: 1, cartKey, flavor_ingredient_id: flavorId, flavor_name: flavorName, variant_id: variantId, variant_name: variantName, sugar_level: sugarLevel });
           renderCart();
           updateBadge();
           renderProducts(currentCategory);
@@ -2205,6 +2315,8 @@ while ($row = $prodResult->fetch_assoc()) {
           const paymentLabel = paymentMethod === 'ewallet' ? 'ONLINE' : 'CASH';
           const amountTendered = parseFloat(amountInput.value);
           const change = amountTendered - finalPayable;
+          const orderType = document.getElementById('checkout-order-type').value;
+          const orderTypeLabel = orderType === 'takeout' ? 'TAKEOUT' : 'DINE-IN';
           const notesText = document.getElementById('checkout-notes-input').value.trim();
 
           const itemsHtml = cart.map(i => `
@@ -2236,6 +2348,10 @@ while ($row = $prodResult->fetch_assoc()) {
       <span>Paid (${paymentLabel}):</span>
       <span>₱${amountTendered.toLocaleString()}</span>
     </div>
+    <div style="display: flex; justify-content: space-between; font-size: 13px; color: var(--charcoal-mid);">
+      <span>Order Type:</span>
+      <span>${orderTypeLabel}</span>
+    </div>
     <div style="display: flex; justify-content: space-between; font-weight: 700; color: var(--sage); margin-bottom: 10px;">
       <span>CHANGE:</span>
       <span>₱${change.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
@@ -2266,6 +2382,7 @@ while ($row = $prodResult->fetch_assoc()) {
           document.getElementById('receipt-content').innerHTML = buildReceiptHtml(null);
           document.getElementById('receipt-back-row').style.display = 'block';
           document.getElementById('receipt-confirm-btn').style.display = 'block';
+          document.getElementById('receipt-print-btn').style.display = 'none';
           document.getElementById('receipt-done-btn').style.display = 'none';
           document.getElementById('receipt-cancel-sale-btn').style.display = 'none';
           currentTransactionId = null;
@@ -2297,9 +2414,12 @@ while ($row = $prodResult->fetch_assoc()) {
               headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
               body: new URLSearchParams({
                 action: 'checkout',
-                cart: JSON.stringify(cart.map(i => ({ id: i.id, qty: i.qty, flavor_ingredient_id: i.flavor_ingredient_id || null, variant_id: i.variant_id || null }))),
+                cart: JSON.stringify(cart.map(i => ({ id: i.id, qty: i.qty, flavor_ingredient_id: i.flavor_ingredient_id || null, variant_id: i.variant_id || null, sugar_level: i.sugar_level || null }))),
                 payment_method: paymentMethod,
                 discount: hasDiscount ? '1' : '',
+                amount_tendered: amountInput.value,
+                order_type: document.getElementById('checkout-order-type').value,
+                table_number: document.getElementById('checkout-table-number').value,
                 notes: document.getElementById('checkout-notes-input').value.trim()
               })
             });
@@ -2323,6 +2443,7 @@ while ($row = $prodResult->fetch_assoc()) {
           document.getElementById('receipt-content').innerHTML = buildReceiptHtml(serverResult.transaction_id);
           document.getElementById('receipt-back-row').style.display = 'none';
           document.getElementById('receipt-confirm-btn').style.display = 'none';
+          document.getElementById('receipt-print-btn').style.display = 'block';
           document.getElementById('receipt-done-btn').style.display = 'block';
           document.getElementById('receipt-cancel-sale-btn').style.display = 'block';
         }
@@ -2368,6 +2489,42 @@ while ($row = $prodResult->fetch_assoc()) {
 
         function requestNewSale() {
           document.getElementById('modal-confirm-newsale').classList.add('show');
+        }
+        function printReceipt() {
+          const receipt = document.querySelector('#receipt-modal .modal-box');
+          if (!receipt) return;
+          const printWindow = window.open('', '_blank', 'width=420,height=720');
+          if (!printWindow) {
+            showToast('Please allow pop-ups to print the receipt.', 'warn');
+            return;
+          }
+
+          // Print an isolated copy instead of the page modal. This guarantees that every line
+          // item and total is included, without dashboard/page styles interfering with the print.
+          const printableReceipt = receipt.cloneNode(true);
+          printableReceipt.querySelectorAll('#receipt-back-row, #receipt-confirm-btn, #receipt-print-btn, #receipt-done-btn, #receipt-cancel-sale-btn').forEach(el => el.remove());
+
+          const printDoc = printWindow.document;
+          printDoc.open();
+          printDoc.write(`<!doctype html><html><head><meta charset="utf-8"><title>Receipt</title><style id="receipt-page-style">
+            :root { --cream-dark:#d6d6d6; --charcoal-mid:#333; --mocha-deep:#000; --mocha:#000; --red-soft:#000; --sage:#000; --font-mono:'Courier New',monospace; --font-display:Arial,sans-serif; }
+            @page { size: 80mm 200mm; margin: 0; }
+            * { box-sizing: border-box; }
+            html, body { width:80mm; margin:0; padding:0; background:#fff; color:#000; }
+            .modal-box { width:80mm !important; max-width:80mm !important; min-height:0; max-height:none !important; overflow:visible !important; margin:0 !important; padding:3mm !important; border:0 !important; border-radius:0 !important; box-shadow:none !important; background:#fff !important; font-family:Arial,sans-serif; }
+            .pos-logo { display:none !important; }
+          </style></head><body><div id="receipt-print-root"></div></body></html>`);
+          printDoc.close();
+          printDoc.getElementById('receipt-print-root').appendChild(printableReceipt);
+
+          // Thermal rolls have a fixed width but variable length. Measure the fully rendered
+          // receipt (including prices, total, payment and change) then make one portrait page.
+          setTimeout(() => {
+            const pageHeight = Math.max(360, Math.ceil(printDoc.documentElement.scrollHeight + 12));
+            printDoc.getElementById('receipt-page-style').textContent += `@page { size: 80mm ${pageHeight}px; margin: 0; }`;
+            printWindow.focus();
+            printWindow.print();
+          }, 100);
         }
         function cancelNewSale() {
           document.getElementById('modal-confirm-newsale').classList.remove('show');

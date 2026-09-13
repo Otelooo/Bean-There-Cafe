@@ -9,6 +9,14 @@
 -- --------------------------------------------------------
 
 -- Dumping structure changes for table bean_there_cafe.transactions
+-- Records the amount received from the customer and the resulting change. Existing
+-- transactions default to 0.00; checkout writes the exact tendered amount and computes change.
+ALTER TABLE transactions ADD COLUMN amount_tendered DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER discount;
+ALTER TABLE transactions ADD COLUMN amount_change DECIMAL(10,2) NOT NULL DEFAULT 0.00 AFTER amount_tendered;
+
+-- Optional table assignment for dine-in orders. NULL keeps takeout and legacy sales unset.
+ALTER TABLE transactions ADD COLUMN table_number INT NULL AFTER order_type;
+
 -- Adds a permanent snapshot of who processed the sale, and lets a deleted
 -- user account detach from old transactions instead of blocking deletion.
 ALTER TABLE transactions ADD COLUMN cashier_username VARCHAR(50) NULL AFTER user_id;
@@ -44,6 +52,7 @@ ALTER TABLE transaction_items ADD CONSTRAINT fk_product_id
   FOREIGN KEY (product_id) REFERENCES products (product_id) ON DELETE SET NULL;
 
 ALTER TABLE transaction_items ADD COLUMN chosen_ingredient_name_snapshot VARCHAR(50) NULL AFTER product_name_snapshot;
+ALTER TABLE transaction_items ADD COLUMN sugar_level_snapshot VARCHAR(10) NULL AFTER variant_name_snapshot;
 
 
 -- Dumping structure changes for table bean_there_cafe.product_ingredient_items
@@ -54,6 +63,13 @@ ALTER TABLE product_ingredient_items ADD COLUMN is_flavor_choice TINYINT(1) NOT 
 
 
 -- Dumping structure changes for table bean_there_cafe.product_ingredients
+-- Ingredient identity, latest delivery/restock notes, and an automatic timestamp for both
+-- creation and later inventory edits. Existing rows retain a blank code until edited.
+ALTER TABLE product_ingredients ADD COLUMN ingredient_code VARCHAR(50) NULL AFTER product_ingredients_id;
+ALTER TABLE product_ingredients ADD UNIQUE KEY uq_product_ingredients_code (ingredient_code);
+ALTER TABLE product_ingredients ADD COLUMN restock_delivery_details TEXT NULL AFTER ingredient_contact;
+ALTER TABLE product_ingredients ADD COLUMN ingredient_updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER restock_delivery_details;
+
 -- Supplier and contact are now tracked per ingredient (set when adding/editing
 -- an ingredient in Inventory) instead of per prepared product.
 ALTER TABLE product_ingredients ADD COLUMN ingredient_supplier VARCHAR(100) NULL AFTER ingredient_unit;
@@ -61,6 +77,10 @@ ALTER TABLE product_ingredients ADD COLUMN ingredient_contact VARCHAR(100) NULL 
 
 
 -- Dumping structure changes for table bean_there_cafe.products and bean_there_cafe.product_ingredients
+-- Optional preset sugar-level choices for made-to-order products, stored as a JSON array
+-- (for example: ["0%","25%","50%","75%","100%"]).
+ALTER TABLE products ADD COLUMN sugar_level_options TEXT NULL AFTER product_type;
+
 -- Critical/Low Stock Threshold settings are now percentages instead of raw unit counts. A
 -- percentage needs a "100%" reference point, so these columns record the stock amount that was
 -- last typed into the Add/Edit form — that becomes the new 100% mark every time an item is

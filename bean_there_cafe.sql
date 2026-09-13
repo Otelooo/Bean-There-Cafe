@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS `products` (
   `product_selling_price` decimal(10,2) NOT NULL,
   `product_supplier_id` int NOT NULL,
   `product_type` enum('made_to_order','prepared') CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL DEFAULT 'made_to_order',
+  `sugar_level_options` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
   `product_image` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`product_id`) USING BTREE,
   KEY `fk_products_category` (`product_category_id`) USING BTREE,
@@ -51,11 +52,14 @@ CREATE TABLE IF NOT EXISTS `product_category` (
 -- Dumping structure for table bean_there_cafe.product_ingredients
 CREATE TABLE IF NOT EXISTS `product_ingredients` (
   `product_ingredients_id` int NOT NULL AUTO_INCREMENT,
+  `ingredient_code` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
   `ingredient_name` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
   `ingredient_stock` decimal(10,2) NOT NULL DEFAULT '0.00',
   `ingredient_unit` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
     `ingredient_supplier` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
     `ingredient_contact` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `restock_delivery_details` text CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `ingredient_updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`product_ingredients_id`) USING BTREE
 ) ENGINE=InnoDB AUTO_INCREMENT=5 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
@@ -121,6 +125,9 @@ CREATE TABLE IF NOT EXISTS `transactions` (
   `transaction_status` enum('completed','cancelled') CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL DEFAULT 'completed',
   `payment_method` enum('cash','online') CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
   `discount` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `amount_tendered` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `amount_change` decimal(10,2) NOT NULL DEFAULT '0.00',
+  `table_number` int DEFAULT NULL,
   PRIMARY KEY (`transaction_id`) USING BTREE,
   KEY `fk_transactions_user` (`user_id`) USING BTREE,
   CONSTRAINT `fk_transactions_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`) ON DELETE SET NULL
@@ -136,6 +143,7 @@ CREATE TABLE IF NOT EXISTS `transaction_items` (
   `product_name_snapshot` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
   `chosen_ingredient_name_snapshot` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
   `variant_name_snapshot` varchar(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
+  `sugar_level_snapshot` varchar(10) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,
   `quantity` int NOT NULL,
   `unit_price` decimal(10,2) NOT NULL,
   `subtotal` decimal(10,2) NOT NULL,
