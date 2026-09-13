@@ -81,10 +81,12 @@ function build_sales_report(mysqli $conn, string $period, int $categoryId, strin
 
     $timeSql = $allDay ? '' : ' AND HOUR(t.transaction_date) BETWEEN ? AND ?';
 
-    // Transaction-level totals (authoritative revenue/count when no category filter is applied)
+    // Transaction-level totals (authoritative revenue/count when no category filter is applied).
+    // Only orders marked Done in the Order Queue count as sales — pending/cancelled orders are
+    // excluded from revenue (and removing a queued order never deletes it from these reports).
     $sql = "SELECT COUNT(*) AS cnt, COALESCE(SUM(transaction_total),0) AS rev
             FROM transactions t
-            WHERE t.transaction_status = 'completed' AND DATE(t.transaction_date) BETWEEN ? AND ?" . $timeSql;
+            WHERE t.transaction_status = 'completed' AND t.order_status = 'done' AND DATE(t.transaction_date) BETWEEN ? AND ?" . $timeSql;
     $stmt = $conn->prepare($sql);
     if ($allDay) {
         $stmt->bind_param('ss', $dateFrom, $dateTill);
@@ -104,7 +106,7 @@ function build_sales_report(mysqli $conn, string $period, int $categoryId, strin
                 JOIN transactions t ON t.transaction_id = ti.transaction_id
                 JOIN products p ON p.product_id = ti.product_id
                 JOIN product_category pc ON pc.product_category_id = p.product_category_id
-                WHERE t.transaction_status = 'completed' AND DATE(t.transaction_date) BETWEEN ? AND ?" . $timeSql;
+                WHERE t.transaction_status = 'completed' AND t.order_status = 'done' AND DATE(t.transaction_date) BETWEEN ? AND ?" . $timeSql;
     $stmt = $conn->prepare($itemSql);
     if ($allDay) {
         $stmt->bind_param('ss', $dateFrom, $dateTill);
@@ -150,7 +152,7 @@ function build_sales_report(mysqli $conn, string $period, int $categoryId, strin
     } else {
         $sqlTrend = "SELECT transaction_id, transaction_date, transaction_total
                      FROM transactions t
-                     WHERE transaction_status = 'completed' AND DATE(transaction_date) BETWEEN ? AND ?" . $timeSql;
+                     WHERE transaction_status = 'completed' AND order_status = 'done' AND DATE(transaction_date) BETWEEN ? AND ?" . $timeSql;
         $stmt = $conn->prepare($sqlTrend);
         if ($allDay) {
             $stmt->bind_param('ss', $dateFrom, $dateTill);
@@ -1228,8 +1230,9 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
   <nav id="sidebar">
     <div class="sidebar-section-label">Owner Panel</div>
     <a href="dashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
-    <a href="transactions.php" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
-    <a href="transaction_history.php" class="nav-item"><i class="fas fa-clock-rotate-left"></i> Transaction History</a>
+  <a href="transactions.php" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
+  <a href="order_queue.php" class="nav-item"><i class="fas fa-list-check"></i> Order Queue</a>
+  <a href="transaction_history.php" class="nav-item"><i class="fas fa-clock-rotate-left"></i> Transaction History</a>
     <a href="products.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Products</a>
     <a href="inventory.php" class="nav-item"><i class="fas fa-warehouse"></i> Inventory
       <?php if ($ingredientAlertCount > 0): ?>
@@ -1240,8 +1243,7 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
     <a href="users.php" class="nav-item"><i class="fas fa-users-gear"></i> User Management</a>
     <hr class="sidebar-divider" />
     <div class="sidebar-section-label">Settings</div>
-    <a href="settings.php" class="nav-item"><i class="fas fa-gear"></i> System
-      Settings</a>
+    <a href="settings.php" class="nav-item"><i class="fas fa-gear"></i> Log</a>
     <a href="backup.php" class="nav-item"><i class="fas fa-database"></i> Data Backup
     </a>
     <div class="sidebar-footer">

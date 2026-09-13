@@ -52,7 +52,7 @@ function build_history_result(mysqli $conn, string $dateFrom, string $dateTill, 
     if ($categoryId > 0) { $types .= 'i'; $params[] = $categoryId; }
     if (!$allDay) { $types .= 'ii'; $params[] = $timeStart; $params[] = $timeEnd; }
 
-    $countSql = "SELECT COUNT(*) AS cnt FROM transactions t WHERE DATE(t.transaction_date) BETWEEN ? AND ?" . $categorySql . $timeSql;
+    $countSql = "SELECT COUNT(*) AS cnt FROM transactions t WHERE t.order_status = 'done' AND DATE(t.transaction_date) BETWEEN ? AND ?" . $categorySql . $timeSql;
     $stmt = $conn->prepare($countSql);
     $stmt->bind_param($types, ...$params);
     $stmt->execute();
@@ -63,14 +63,15 @@ function build_history_result(mysqli $conn, string $dateFrom, string $dateTill, 
     $page = max(1, min($page, $totalPages));
     $offset = ($page - 1) * $perPage;
 
-    // No transaction_status filter — this is a historical record, so cancelled sales show too
-    // (distinguished by the status pill), unlike Sales Report's revenue-only 'completed' queries.
+    // Only orders marked Done in the Order Queue count as sales — pending/cancelled orders never
+    // appear here. Voided sales stay visible (status pill) as part of the historical record, and
+    // removing an order from the queue never deletes it from history.
     $listSql = "SELECT t.transaction_id, t.transaction_date, t.transaction_total, t.transaction_status,
                        t.payment_method, t.discount, t.amount_tendered, t.amount_change, t.order_type, t.notes,
                        COALESCE(t.cashier_username, u.username, 'Deleted user') AS cashier_name
                 FROM transactions t
                 LEFT JOIN users u ON u.user_id = t.user_id
-                WHERE DATE(t.transaction_date) BETWEEN ? AND ?" . $categorySql . $timeSql . "
+                WHERE t.order_status = 'done' AND DATE(t.transaction_date) BETWEEN ? AND ?" . $categorySql . $timeSql . "
                 ORDER BY t.transaction_date DESC
                 LIMIT ? OFFSET ?";
     $stmt = $conn->prepare($listSql);
@@ -190,7 +191,7 @@ function build_history_export(mysqli $conn, string $dateFrom, string $dateTill, 
                        COALESCE(t.cashier_username, u.username, 'Deleted user') AS cashier_name
                 FROM transactions t
                 LEFT JOIN users u ON u.user_id = t.user_id
-                WHERE DATE(t.transaction_date) BETWEEN ? AND ?" . $categorySql . $timeSql . "
+                WHERE t.order_status = 'done' AND DATE(t.transaction_date) BETWEEN ? AND ?" . $categorySql . $timeSql . "
                 ORDER BY t.transaction_date DESC";
     $stmt = $conn->prepare($listSql);
     $stmt->bind_param($types, ...$params);
@@ -589,6 +590,7 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
   <div class="sidebar-section-label">Owner Panel</div>
   <a href="dashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
   <a href="transactions.php" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
+  <a href="order_queue.php" class="nav-item"><i class="fas fa-list-check"></i> Order Queue</a>
   <a href="transaction_history.php" class="nav-item active"><i class="fas fa-clock-rotate-left"></i> Transaction History</a>
   <a href="products.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Products</a>
   <a href="inventory.php" class="nav-item"><i class="fas fa-warehouse"></i> Inventory
@@ -600,7 +602,7 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
   <a href="users.php" class="nav-item"><i class="fas fa-users-gear"></i> User Management</a>
   <hr class="sidebar-divider"/>
   <div class="sidebar-section-label">Settings</div>
-  <a href="settings.php" class="nav-item"><i class="fas fa-gear"></i> System Settings</a>
+  <a href="settings.php" class="nav-item"><i class="fas fa-gear"></i>  Log</a>
   <a href="backup.php" class="nav-item"><i class="fas fa-database"></i> Data Backup</a>
   <div class="sidebar-footer">
     <p>SmartStock v1.0<br />Bean There Café<br />ISO/IEC 25010 Compliant</p>

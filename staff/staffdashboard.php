@@ -1193,8 +1193,9 @@ $ingredientAlertCount = $criticalIngredientCount + $lowIngredientCount;
   <nav id="sidebar">
     <div class="sidebar-section-label">Staff Panel</div>
     <a href="staffdashboard.php" class="nav-item active"><i class="fas fa-chart-line"></i> Dashboard</a>
-    <a href="staff_transactions.php" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
-    <a href="staff_transaction_history.php" class="nav-item"><i class="fas fa-clock-rotate-left"></i> Transaction History</a>
+  <a href="staff_transactions.php" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
+  <a href="staff_order_queue.php" class="nav-item"><i class="fas fa-list-check"></i> Order Queue</a>
+  <a href="staff_transaction_history.php" class="nav-item"><i class="fas fa-clock-rotate-left"></i> Transaction History</a>
     <a href="staff_products.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Products
       <?php if ($criticalStockCount > 0): ?>
         <span class="nav-badge"><?= $criticalStockCount ?></span>

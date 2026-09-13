@@ -342,6 +342,7 @@ $stmt->close();
   <div class="sidebar-section-label">Owner Panel</div>
   <a href="dashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
   <a href="transactions.php" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
+  <a href="order_queue.php" class="nav-item"><i class="fas fa-list-check"></i> Order Queue</a>
   <a href="transaction_history.php" class="nav-item"><i class="fas fa-clock-rotate-left"></i> Transaction History</a>
   <a href="products.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Products</a>
   <a href="inventory.php" class="nav-item"><i class="fas fa-warehouse"></i> Inventory
@@ -349,11 +350,12 @@ $stmt->close();
       <span class="nav-badge"><?= $ingredientAlertCount ?></span>
     <?php endif; ?>
   </a>
+  
   <a href="reports.php" class="nav-item"><i class="fas fa-chart-bar"></i> Sales Report</a>
   <a href="users.php" class="nav-item"><i class="fas fa-users-gear"></i> User Management</a>
   <hr class="sidebar-divider"/>
   <div class="sidebar-section-label">Settings</div>
-  <a href="settings.php" class="nav-item active"><i class="fas fa-gear"></i> System Settings</a>
+  <a href="settings.php" class="nav-item active"><i class="fas fa-gear"></i> Log</a>
   <a href="backup.php" class="nav-item"><i class="fas fa-database"></i> Data Backup</a>
   <div class="sidebar-footer">
     <p>SmartStock v1.0<br />Bean There Café<br />ISO/IEC 25010 Compliant</p>
@@ -369,7 +371,7 @@ $stmt->close();
   <?php endif; ?>
   <div class="page-strip">
     <div>
-      <h1><i class="fas fa-gear" style="color:var(--gold);font-size:22px;margin-right:10px;"></i>System Settings</h1>
+      <h1><i class="fas fa-gear" style="color:var(--gold);font-size:22px;margin-right:10px;"></i>Log</h1>
       <div class="sub">Configure café identity, POS rates, and inventory alert thresholds</div>
     </div>
   </div>

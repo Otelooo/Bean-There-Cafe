@@ -33,16 +33,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $restockDetailsVal = $restockDetails !== '' ? $restockDetails : null;
 
             $currentIngredientId = $action === 'edit' ? (int)($_POST['ingredient_id'] ?? 0) : 0;
-            $codeCheck = $conn->prepare('SELECT product_ingredients_id FROM product_ingredients WHERE ingredient_code = ? AND product_ingredients_id <> ? LIMIT 1');
-            $codeCheck->bind_param('si', $code, $currentIngredientId);
-            $codeCheck->execute();
-            $codeAlreadyUsed = (bool)$codeCheck->get_result()->fetch_assoc();
-            $codeCheck->close();
 
-            if ($codeAlreadyUsed) {
-                $msg = 'That ingredient code is already in use.';
-                $msgType = 'warn';
-            } elseif ($action === 'add') {
+            if ($action === 'add') {
                 $stmt = $conn->prepare('INSERT INTO product_ingredients (ingredient_code, ingredient_name, ingredient_stock, ingredient_stock_reference, ingredient_unit, ingredient_supplier, ingredient_contact, restock_delivery_details) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
                 $stmt->bind_param('ssddssss', $code, $name, $stockVal, $stockVal, $unit, $supplierVal, $contactVal, $restockDetailsVal);
                 $stmt->execute();
@@ -325,6 +317,33 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
     .btn-modal-primary:hover { background:var(--mocha-mid); }
     .btn-modal-cancel { width:100%; padding:9px; margin-top:7px; background:transparent; color:#bbb; border:1.5px solid var(--cream-dark); border-radius:8px; font-family:var(--font-body); font-size:13px; cursor:pointer; transition:all .2s; }
     .btn-modal-cancel:hover { color:var(--red-soft); border-color:var(--red-soft); }
+
+    /* ── PRINT BUTTON ── */
+    .btn-outline { padding:9px 17px; border-radius:8px; background:transparent; color:var(--mocha); border:1.5px solid var(--mocha); font-family:var(--font-body); font-size:13px; font-weight:600; cursor:pointer; transition:all .2s; display:flex; align-items:center; gap:6px; }
+    .btn-outline:hover { background:var(--mocha); color:var(--cream); }
+
+    /* ── PRINT-ONLY REPORT ── */
+    #print-report { display:none; }
+    @media print {
+      @page { size: A4 landscape; margin: 10mm; }
+      body { background:#fff !important; }
+      #app-header, #sidebar, #main, #toast-container, .modal-overlay { display:none !important; }
+      #print-report { display:block; color:#000; font-size:10.5px; -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+      .pr-head { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:2.5px solid #000; padding-bottom:8px; margin-bottom:12px; }
+      .pr-title { font-family:var(--font-display); font-size:19px; font-weight:700; }
+      .pr-sub { font-size:11px; color:#444; margin-top:2px; }
+      .pr-meta { text-align:right; font-size:10px; line-height:1.7; }
+      .pr-table { width:100%; border-collapse:collapse; }
+      .pr-table thead { display:table-header-group; }
+      .pr-table th, .pr-table td { border:1px solid #8a8a8a; padding:5px 7px; text-align:left; vertical-align:top; }
+      .pr-table th { background:#efe4cd; font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.6px; }
+      .pr-table tr { page-break-inside:avoid; }
+      .pr-mono { font-family:var(--font-mono); font-size:9.5px; }
+      .pr-right { text-align:right; }
+      .pr-wrap { word-break:break-word; white-space:pre-wrap; }
+      .pr-summary { margin-top:10px; font-size:10.5px; font-weight:600; }
+      .pr-sign { display:flex; justify-content:space-between; margin-top:48px; font-size:10.5px; }
+    }
   </style>
 </head>
 <body>
@@ -349,6 +368,7 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
   <div class="sidebar-section-label">Staff Panel</div>
   <a href="staffdashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
   <a href="staff_transactions.php" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
+  <a href="staff_order_queue.php" class="nav-item"><i class="fas fa-list-check"></i> Order Queue</a>
   <a href="staff_transaction_history.php" class="nav-item"><i class="fas fa-clock-rotate-left"></i> Transaction History</a>
   <a href="staff_products.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Products</a>
   <a href="staff_inventory.php" class="nav-item active"><i class="fas fa-warehouse"></i> Inventory
@@ -375,7 +395,10 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
       <h1><i class="fas fa-warehouse" style="color:var(--gold);font-size:22px;margin-right:10px;"></i>Inventory</h1>
       <div class="sub">Track raw ingredient and supply stock used to make your products</div>
     </div>
-    <button class="btn-primary" onclick="openModal('modal-add-item')"><i class="fas fa-plus"></i> Add Ingredient</button>
+    <div style="display:flex;gap:10px;">
+      <button class="btn-outline" onclick="printInventory()"><i class="fas fa-print"></i> Print</button>
+      <button class="btn-primary" onclick="openModal('modal-add-item')"><i class="fas fa-plus"></i> Add Ingredient</button>
+    </div>
   </div>
   <div style="padding:22px 26px;">
     <div class="inv-toolbar">
@@ -398,7 +421,7 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
   <div class="modal-box">
     <div class="modal-title"><i class="fas fa-plus-circle" style="color:var(--gold);margin-right:8px;"></i>Add New Ingredient</div>
     <div class="modal-sub">Add a raw ingredient or supply to track stock for.</div>
-    <form method="POST" action="staff_inventory.php" onsubmit="return checkDuplicateAndConfirm(event, this.elements['name'].value, ingredients.map(i => i.name), 'ingredient')">
+    <form method="POST" action="staff_inventory.php" onsubmit="return checkAddForm(event, this)">
       <input type="hidden" name="action" value="add">
       <div class="modal-field">
         <label>Ingredient Name</label>
@@ -438,7 +461,7 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
   <div class="modal-box">
     <div class="modal-title"><i class="fas fa-pen" style="color:var(--gold);margin-right:8px;"></i>Edit Ingredient</div>
     <div class="modal-sub">Update ingredient stock details.</div>
-    <form method="POST" action="staff_inventory.php">
+    <form method="POST" action="staff_inventory.php" onsubmit="return checkEditForm(event, this)">
       <input type="hidden" name="action" value="edit">
       <input type="hidden" name="ingredient_id" id="edit-ingredient-id" value="" />
       <div class="modal-field"><label>Ingredient Name</label><input type="text" name="name" id="edit-name" required /></div>
@@ -477,6 +500,43 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
 </div>
 
 <div id="toast-container"></div>
+
+<!-- Print-only inventory report (populated by printInventory(), revealed by @media print) -->
+<div id="print-report">
+  <div class="pr-head">
+    <div>
+      <div class="pr-title">Bean There Caf&eacute; &mdash; Inventory Report</div>
+      <div class="pr-sub">Raw Ingredients &#38; Supplies &#8212; Full Stock Details</div>
+    </div>
+    <div class="pr-meta">
+      <div>Date Printed: <span id="pr-date"></span></div>
+      <div>Printed by: <?= htmlspecialchars($displayName) ?> (Cafe Staff)</div>
+      <div>Total Ingredients: <span id="pr-count"></span></div>
+    </div>
+  </div>
+  <table class="pr-table">
+    <thead>
+      <tr>
+        <th style="width:75px;">Code</th>
+        <th>Ingredient</th>
+        <th style="width:60px;">Stock</th>
+        <th style="width:60px;">Unit</th>
+        <th style="width:110px;">Supplier</th>
+        <th style="width:100px;">Contact</th>
+        <th style="width:24%;">Last Restock / Delivery Details</th>
+        <th style="width:95px;">Last Updated</th>
+        <th style="width:55px;">Status</th>
+      </tr>
+    </thead>
+    <tbody id="pr-tbody"></tbody>
+  </table>
+  <div class="pr-summary" id="pr-summary"></div>
+  <div class="pr-sign">
+    <div>Prepared by: ____________________________</div>
+    <div>Checked by: ____________________________</div>
+  </div>
+</div>
+
 <script id="ingredients-data" type="application/json"><?= json_encode($ingredients, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?></script>
 
 <script>
@@ -547,6 +607,48 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
       document.getElementById('ing-search').value,
       document.getElementById('ing-stock-filter').value
     );
+  }
+
+  // ── Print inventory report ──
+  // Builds the print-only report from the FULL ingredient list (every detail, untruncated)
+  // and opens the browser's print dialog. Screen layout is untouched — the report lives in
+  // #print-report, which is hidden on screen and revealed by the @media print rules.
+  function escHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&#38;', '<': '&#60;', '>': '&#62;', '"': '&#34;', "'": '&#39;' }[c]));
+  }
+
+  function printInventory() {
+    const tbody = document.getElementById('pr-tbody');
+    if (!tbody) return;
+
+    const sorted = [...ingredients].sort((a, b) => a.name.localeCompare(b.name));
+    const counts = { ok: 0, low: 0, crit: 0 };
+    sorted.forEach(i => { counts[i.level] = (counts[i.level] || 0) + 1; });
+
+    if (sorted.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px;">No ingredients on record.</td></tr>';
+    } else {
+      tbody.innerHTML = sorted.map(i => `
+        <tr>
+          <td class="pr-mono">${escHtml(i.code) || '—'}</td>
+          <td><strong>${escHtml(i.name)}</strong></td>
+          <td class="pr-mono pr-right">${qty(i.stock)}</td>
+          <td class="pr-mono">${escHtml(i.unit_label)}</td>
+          <td>${escHtml(i.supplier) || '—'}</td>
+          <td class="pr-mono">${escHtml(i.contact) || '—'}</td>
+          <td class="pr-wrap">${escHtml(i.restock_details) || '—'}</td>
+          <td class="pr-mono">${escHtml(i.updated_at) || '—'}</td>
+          <td>${levelLabels[i.level]}</td>
+        </tr>
+      `).join('');
+    }
+
+    document.getElementById('pr-date').textContent = new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
+    document.getElementById('pr-count').textContent = sorted.length;
+    document.getElementById('pr-summary').textContent =
+      `Summary: ${sorted.length} ingredient(s) — ${counts.ok} OK · ${counts.low} Low · ${counts.crit} Critical`;
+
+    window.print();
   }
 
   function openEditModal(id) {
@@ -630,18 +732,83 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
     }
     return null;
   }
-  function checkDuplicateAndConfirm(event, newName, existingNames, itemType) {
-    const match = findSimilarExisting(newName, existingNames);
-    if (!match) return true;
-    event.preventDefault();
-    pendingDeleteForm = event.target;
-    document.getElementById('confirm-delete-message').textContent =
-      `Are you sure you want to add this ${itemType}? It seems "${match}" is already inserted inside.`;
+  // ── Duplicate code / name confirmation ──
+  // Finds an existing ingredient that already uses the given code (case-insensitive).
+  function findExistingByCode(code) {
+    const norm = (code || '').toUpperCase().trim();
+    if (!norm) return null;
+    return ingredients.find(i => (i.code || '').toUpperCase().trim() === norm) || null;
+  }
+
+  // Shared confirmation flow: shows the confirm modal with a custom message and button label.
+  // On "Confirm", submits the stored form.
+  function showConfirmModal(form, message, confirmLabel, confirmBg) {
+    pendingDeleteForm = form;
+    document.getElementById('confirm-delete-message').textContent = message;
     const yesBtn = document.getElementById('confirm-delete-yes');
-    yesBtn.textContent = 'Add Anyway';
-    yesBtn.style.background = 'var(--mocha)';
+    yesBtn.textContent = confirmLabel;
+    yesBtn.style.background = confirmBg;
     openModal('modal-confirm-delete');
-    return false;
+  }
+
+  // Add form: checks for duplicate code first, then duplicate/similar name.
+  function checkAddForm(event, form) {
+    const code = form.elements['ingredient_code'].value;
+    const name = form.elements['name'].value;
+
+    // 1) Duplicate code check — show which ingredient already has this code.
+    const existingByCode = findExistingByCode(code);
+    if (existingByCode) {
+      event.preventDefault();
+      showConfirmModal(
+        form,
+        `The code "${existingByCode.code}" is already in use by "${existingByCode.name}". Do you still want to add this ingredient with the same code?`,
+        'Confirm Add',
+        'var(--mocha)'
+      );
+      return false;
+    }
+
+    // 2) Duplicate / similar name check (existing behavior).
+    const match = findSimilarExisting(name, ingredients.map(i => i.name));
+    if (match) {
+      event.preventDefault();
+      showConfirmModal(
+        form,
+        `Are you sure you want to add this ingredient? It seems "${match}" is already inserted inside.`,
+        'Add Anyway',
+        'var(--mocha)'
+      );
+      return false;
+    }
+
+    return true;
+  }
+
+  // Edit form: checks for duplicate code against OTHER ingredients (excludes the one being edited).
+  function checkEditForm(event, form) {
+    const code = form.elements['ingredient_code'].value;
+    const currentId = parseInt(form.elements['ingredient_id'].value, 10) || 0;
+
+    const norm = (code || '').toUpperCase().trim();
+    if (!norm) return true;
+
+    const existingByCode = ingredients.find(i =>
+      i.id !== currentId && (i.code || '').toUpperCase().trim() === norm
+    );
+
+    if (existingByCode) {
+      event.preventDefault();
+      showConfirmModal(
+        form,
+        `The code "${existingByCode.code}" is already in use by "${existingByCode.name}". Do you still want to save this ingredient with the same code?`,
+        'Confirm Save',
+        'var(--mocha)'
+      );
+      return false;
+    }
+
+    return true;
   }
 
   function showToast(msg, type = 'success') {

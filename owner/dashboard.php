@@ -1291,8 +1291,9 @@ if ($maxMonthlyTotal <= 0) {
   <nav id="sidebar">
     <div class="sidebar-section-label">Owner Panel</div>
     <a href="dashboard.php" class="nav-item active"><i class="fas fa-chart-line"></i> Dashboard</a>
-    <a href="transactions.php" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
-    <a href="transaction_history.php" class="nav-item"><i class="fas fa-clock-rotate-left"></i> Transaction History</a>
+  <a href="transactions.php" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
+  <a href="order_queue.php" class="nav-item"><i class="fas fa-list-check"></i> Order Queue</a>
+  <a href="transaction_history.php" class="nav-item"><i class="fas fa-clock-rotate-left"></i> Transaction History</a>
     <a href="products.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Products
       <?php if ($criticalStockCount > 0): ?>
         <span class="nav-badge"><?= $criticalStockCount ?></span>
@@ -1307,8 +1308,7 @@ if ($maxMonthlyTotal <= 0) {
     <a href="users.php" class="nav-item"><i class="fas fa-users-gear"></i> User Management</a>
     <hr class="sidebar-divider" />
     <div class="sidebar-section-label">Settings</div>
-    <a href="settings.php" class="nav-item"><i class="fas fa-gear"></i> System
-      Settings</a>
+    <a href="settings.php" class="nav-item"><i class="fas fa-gear"></i> Log </a>
     <a href="backup.php" class="nav-item"><i class="fas fa-database"></i> Data Backup
     </a>
     <div class="sidebar-footer">
