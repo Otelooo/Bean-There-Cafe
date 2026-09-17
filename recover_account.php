@@ -144,7 +144,7 @@ if ($stage === 'answer') {
             --gold-light: #E8B860;
             --sage: #7A9E7E;
             --red-soft: #C0392B;
-            --shadow-lg: 0 12px 40px rgba(74, 44, 42, .22);
+            --shadow-lg: 0 4px 14px rgba(74, 44, 42, .12), 0 22px 50px rgba(74, 44, 42, .24);
             --radius: 12px;
             --radius-lg: 18px;
             --font-display: 'Playfair Display', serif;

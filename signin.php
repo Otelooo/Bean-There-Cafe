@@ -71,9 +71,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             --gold-light: #E8B860;
             --sage: #7A9E7E;
             --red-soft: #C0392B;
-            --shadow-sm: 0 2px 8px rgba(74, 44, 42, .10);
-            --shadow-md: 0 6px 24px rgba(74, 44, 42, .15);
-            --shadow-lg: 0 12px 40px rgba(74, 44, 42, .22);
+            --shadow-sm: 0 1px 2px rgba(74, 44, 42, .06), 0 3px 10px rgba(74, 44, 42, .08);
+            --shadow-md: 0 2px 6px rgba(74, 44, 42, .08), 0 10px 28px rgba(74, 44, 42, .16);
+            --shadow-lg: 0 4px 14px rgba(74, 44, 42, .12), 0 22px 50px rgba(74, 44, 42, .24);
             --radius: 12px;
             --radius-lg: 18px;
             --font-display: 'Playfair Display', serif;
@@ -312,7 +312,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             display: none;
             align-items: center;
             justify-content: center;
-            backdrop-filter: blur(4px);
+            backdrop-filter: blur(6px);
             padding: 20px;
         }
 

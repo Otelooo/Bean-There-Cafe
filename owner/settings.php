@@ -8,50 +8,6 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'cafe owner') {
     exit;
 }
 
-// Returns a new relative image path if a valid file was uploaded, or null if no file was provided.
-// Throws on an invalid/failed upload so the caller can surface a clear error.
-function handle_settings_image_upload(?array $file): ?string
-{
-    if (!$file || ($file['error'] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
-        return null;
-    }
-    if ($file['error'] !== UPLOAD_ERR_OK) {
-        throw new RuntimeException('Image upload failed. Please try again.');
-    }
-    if ($file['size'] > 5 * 1024 * 1024) {
-        throw new RuntimeException('Image must be smaller than 5MB.');
-    }
-
-    $allowedExtByMime = ['image/jpeg' => 'jpg', 'image/png' => 'png', 'image/gif' => 'gif', 'image/webp' => 'webp'];
-    $mime = mime_content_type($file['tmp_name']);
-    if (!isset($allowedExtByMime[$mime])) {
-        throw new RuntimeException('Please upload a JPG, PNG, GIF, or WEBP image.');
-    }
-
-    $destDir = __DIR__ . '/../uploads/settings';
-    if (!is_dir($destDir) && !mkdir($destDir, 0755, true) && !is_dir($destDir)) {
-        throw new RuntimeException('Could not prepare the upload folder.');
-    }
-
-    $filename = uniqid('ewallet_', true) . '.' . $allowedExtByMime[$mime];
-    if (!move_uploaded_file($file['tmp_name'], $destDir . '/' . $filename)) {
-        throw new RuntimeException('Could not save the uploaded image.');
-    }
-
-    return 'uploads/settings/' . $filename;
-}
-
-function delete_settings_image_file(?string $relativePath): void
-{
-    if (!$relativePath) {
-        return;
-    }
-    $fullPath = __DIR__ . '/../' . $relativePath;
-    if (is_file($fullPath)) {
-        @unlink($fullPath);
-    }
-}
-
 // Preset options for the "Account Recovery" security-question picker below — the owner can also
 // type a fully custom question via the <select>'s "Write your own…" option.
 const SECURITY_QUESTION_PRESETS = [
@@ -104,8 +60,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $settingsBefore = get_system_settings($conn);
-    $removeQrImage = !empty($_POST['remove_ewallet_qr_image']);
     $cafeName = trim($_POST['cafe_name'] ?? '');
     $cafeAddress = trim($_POST['cafe_address'] ?? '');
     $cafeContact = trim($_POST['cafe_contact'] ?? '');
@@ -138,18 +92,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $msgType = 'warn';
     } else {
         try {
-            $newQrImage = handle_settings_image_upload($_FILES['ewallet_qr_image'] ?? null);
-
-            if ($newQrImage !== null) {
-                delete_settings_image_file($settingsBefore['ewallet_qr_image']);
-                $ewalletQrImage = $newQrImage;
-            } elseif ($removeQrImage) {
-                delete_settings_image_file($settingsBefore['ewallet_qr_image']);
-                $ewalletQrImage = '';
-            } else {
-                $ewalletQrImage = $settingsBefore['ewallet_qr_image'];
-            }
-
             $updates = [
                 'cafe_name' => $cafeName,
                 'cafe_address' => $cafeAddress,
@@ -159,7 +101,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'critical_stock_threshold' => (string)(float)$criticalThreshold,
                 'low_stock_threshold' => (string)(float)$lowThreshold,
                 'receipt_footer_message' => $receiptFooter,
-                'ewallet_qr_image' => $ewalletQrImage,
             ];
 
             $stmt = $conn->prepare('INSERT INTO system_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)');
@@ -234,9 +175,9 @@ $stmt->close();
       --font-display: 'Playfair Display', serif;
       --font-body:    'DM Sans', sans-serif;
       --font-mono:    'DM Mono', monospace;
-      --shadow-sm:    0 2px 8px rgba(74,44,42,.10);
-      --shadow-md:    0 6px 24px rgba(74,44,42,.15);
-      --shadow-lg:    0 12px 40px rgba(74,44,42,.22);
+      --shadow-sm: 0 1px 2px rgba(74, 44, 42, .06), 0 3px 10px rgba(74, 44, 42, .08);
+      --shadow-md: 0 2px 6px rgba(74, 44, 42, .08), 0 10px 28px rgba(74, 44, 42, .16);
+      --shadow-lg: 0 4px 14px rgba(74, 44, 42, .12), 0 22px 50px rgba(74, 44, 42, .24);
       --radius:       12px;
       --radius-lg:    18px;
     }
@@ -254,6 +195,17 @@ $stmt->close();
       background: var(--mocha-deep);
       display: flex; align-items: center; padding: 0 24px 0 0;
       box-shadow: 0 2px 20px rgba(0,0,0,.35);
+    }
+
+    #app-header::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--gold), transparent);
+      opacity: .85;
     }
     .header-brand {
       width: var(--sidebar-w); flex-shrink: 0;
@@ -342,8 +294,13 @@ $stmt->close();
     .page-strip h1 { font-family: var(--font-display); font-size: 21px; font-weight: 700; color: var(--mocha-deep); }
     .page-strip .sub { font-size: 12px; color: var(--mocha-mid); margin-top: 1px; }
 
-    .btn-primary { padding:9px 17px; border-radius:8px; background:var(--mocha); color:var(--cream); border:none; font-family:var(--font-body); font-size:13px; font-weight:600; cursor:pointer; transition:all .2s; display:flex; align-items:center; gap:6px; }
-    .btn-primary:hover { background:var(--mocha-mid); }
+    .btn-primary { padding:9px 17px; border-radius:8px; background:var(--mocha); color:var(--cream); border:none; font-family:var(--font-body); font-size:13px; font-weight:600; cursor:pointer; transition:all .2s; display:flex; align-items:center; gap:6px;
+      box-shadow: 0 2px 6px rgba(74, 44, 42, .18);
+    }
+    .btn-primary:hover { background:var(--mocha-mid);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(74, 44, 42, .26);
+    }
 
     /* ── SETTINGS CARDS ── */
     .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
@@ -433,7 +390,7 @@ $stmt->close();
     </div>
   </div>
 
-  <form method="POST" action="settings.php" enctype="multipart/form-data">
+  <form method="POST" action="settings.php">
     <div style="padding:22px 26px;">
       <div class="settings-grid">
         <div class="settings-card">
@@ -467,27 +424,6 @@ $stmt->close();
               <input type="number" name="discount_rate_percent" value="<?= htmlspecialchars($discountRatePercentDisplay) ?>" min="0" max="100" step="0.01" required>
               <div class="hint">Applied when a discount is selected at checkout.</div>
             </div>
-          </div>
-        </div>
-
-        <div class="settings-card">
-          <div class="settings-card-title"><i class="fas fa-qrcode"></i>E-Wallet (GCash) QR Code</div>
-          <div class="settings-card-sub">Shown to the customer at checkout when E-Wallet (Gcash) is selected as the payment method.</div>
-          <?php if ($settings['ewallet_qr_image'] !== ''): ?>
-            <div style="display:flex;align-items:center;gap:14px;margin-bottom:14px;">
-              <img src="../<?= htmlspecialchars($settings['ewallet_qr_image']) ?>" alt="Current GCash QR code" style="width:88px;height:88px;object-fit:cover;border-radius:8px;border:1.5px solid var(--cream-dark);">
-              <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--charcoal-mid);font-weight:500;text-transform:none;letter-spacing:normal;cursor:pointer;">
-                <input type="checkbox" name="remove_ewallet_qr_image" value="1" style="width:16px;height:16px;">
-                Remove current QR code
-              </label>
-            </div>
-          <?php else: ?>
-            <div class="hint" style="margin-bottom:10px;">No QR code uploaded yet.</div>
-          <?php endif; ?>
-          <div class="settings-field">
-            <label>Upload <?= $settings['ewallet_qr_image'] !== '' ? 'Replacement' : '' ?> QR Code Image</label>
-            <input type="file" name="ewallet_qr_image" accept="image/*">
-            <div class="hint">JPG, PNG, GIF, or WEBP — max 5MB. Leave blank to keep the current image.</div>
           </div>
         </div>
 

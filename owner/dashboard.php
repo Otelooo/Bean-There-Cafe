@@ -192,9 +192,9 @@ if ($maxMonthlyTotal <= 0) {
       --font-display: 'Playfair Display', serif;
       --font-body: 'DM Sans', sans-serif;
       --font-mono: 'DM Mono', monospace;
-      --shadow-sm: 0 2px 8px rgba(74, 44, 42, .10);
-      --shadow-md: 0 6px 24px rgba(74, 44, 42, .15);
-      --shadow-lg: 0 12px 40px rgba(74, 44, 42, .22);
+      --shadow-sm: 0 1px 2px rgba(74, 44, 42, .06), 0 3px 10px rgba(74, 44, 42, .08);
+      --shadow-md: 0 2px 6px rgba(74, 44, 42, .08), 0 10px 28px rgba(74, 44, 42, .16);
+      --shadow-lg: 0 4px 14px rgba(74, 44, 42, .12), 0 22px 50px rgba(74, 44, 42, .24);
       --radius: 12px;
       --radius-lg: 18px;
     }
@@ -241,6 +241,17 @@ if ($maxMonthlyTotal <= 0) {
       align-items: center;
       padding: 0 24px 0 0;
       box-shadow: 0 2px 20px rgba(0, 0, 0, .35);
+    }
+
+    #app-header::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--gold), transparent);
+      opacity: .85;
     }
 
     .header-brand {
@@ -542,8 +553,9 @@ if ($maxMonthlyTotal <= 0) {
     }
 
     .kpi-card:hover {
-      transform: translateY(-2px);
+      transform: translateY(-3px);
       box-shadow: var(--shadow-md);
+      border-color: rgba(201, 148, 58, .4);
     }
 
     .kpi-icon {
@@ -651,6 +663,7 @@ if ($maxMonthlyTotal <= 0) {
       text-transform: uppercase;
       color: rgba(245, 236, 215, .65);
       text-align: left;
+      border-bottom: 2px solid var(--gold);
     }
 
     .data-table td {
@@ -665,7 +678,7 @@ if ($maxMonthlyTotal <= 0) {
     }
 
     .data-table tr:hover td {
-      background: rgba(201, 148, 58, .03);
+      background: rgba(201, 148, 58, .06);
     }
 
     .table-wrap {
@@ -880,10 +893,13 @@ if ($maxMonthlyTotal <= 0) {
       display: flex;
       align-items: center;
       gap: 6px;
+      box-shadow: 0 2px 6px rgba(74, 44, 42, .18);
     }
 
     .btn-primary:hover {
       background: var(--mocha-mid);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(74, 44, 42, .26);
     }
 
     .btn-outline {
@@ -1152,7 +1168,7 @@ if ($maxMonthlyTotal <= 0) {
       display: none;
       align-items: center;
       justify-content: center;
-      backdrop-filter: blur(4px);
+      backdrop-filter: blur(6px);
     }
 
     .modal-overlay.show {

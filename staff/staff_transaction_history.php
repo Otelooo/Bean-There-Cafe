@@ -398,9 +398,9 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
       --font-display: 'Playfair Display', serif;
       --font-body:    'DM Sans', sans-serif;
       --font-mono:    'DM Mono', monospace;
-      --shadow-sm:    0 2px 8px rgba(74,44,42,.10);
-      --shadow-md:    0 6px 24px rgba(74,44,42,.15);
-      --shadow-lg:    0 12px 40px rgba(74,44,42,.22);
+      --shadow-sm: 0 1px 2px rgba(74, 44, 42, .06), 0 3px 10px rgba(74, 44, 42, .08);
+      --shadow-md: 0 2px 6px rgba(74, 44, 42, .08), 0 10px 28px rgba(74, 44, 42, .16);
+      --shadow-lg: 0 4px 14px rgba(74, 44, 42, .12), 0 22px 50px rgba(74, 44, 42, .24);
       --radius:       12px;
       --radius-lg:    18px;
     }
@@ -418,6 +418,17 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
       background: var(--mocha-deep);
       display: flex; align-items: center; padding: 0 24px 0 0;
       box-shadow: 0 2px 20px rgba(0,0,0,.35);
+    }
+
+    #app-header::after {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--gold), transparent);
+      opacity: .85;
     }
     .header-brand {
       width: var(--sidebar-w); flex-shrink: 0;
@@ -500,10 +511,12 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
     /* ── TABLES ── */
     .data-table { width: 100%; border-collapse: collapse; }
     .data-table thead { background: var(--mocha-deep); }
-    .data-table th { padding: 11px 15px; font-size: 10px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: rgba(245,236,215,.65); text-align: left; }
+    .data-table th { padding: 11px 15px; font-size: 10px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: rgba(245,236,215,.65); text-align: left;
+      border-bottom: 2px solid var(--gold);
+    }
     .data-table td { padding: 10px 15px; font-size: 13px; color: var(--charcoal); border-bottom: 1px solid var(--cream-dark); vertical-align: top; }
     .data-table tr:last-child td { border-bottom: none; }
-    .data-table tr:hover td { background: rgba(201,148,58,.03); }
+    .data-table tr:hover td { background: rgba(201, 148, 58, .06); }
     .table-wrap { background: var(--cream); border: 1.5px solid var(--cream-dark); border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow-sm); }
 
     .rec-table { width: 100%; border-collapse: collapse; }
@@ -556,7 +569,7 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
     @keyframes toastIn { from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);} }
 
     /* ── MODAL ── */
-    .modal-overlay { position:fixed; inset:0; z-index:9999; background:rgba(20,10,8,.58); display:none; align-items:center; justify-content:center; backdrop-filter:blur(4px); }
+    .modal-overlay { position:fixed; inset:0; z-index:9999; background:rgba(20,10,8,.58); display:none; align-items:center; justify-content:center; backdrop-filter:blur(6px); }
     .modal-overlay.show { display:flex; }
     .modal-box { background:var(--cream-light); border-radius:var(--radius-lg); padding:28px 30px; max-width:420px; width:92%; max-height:88vh; overflow-y:auto; box-shadow:var(--shadow-lg); animation:popIn .25s cubic-bezier(.34,1.56,.64,1); }
     @keyframes popIn { from{opacity:0;transform:scale(.88);}to{opacity:1;transform:scale(1);} }

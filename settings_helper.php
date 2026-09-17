@@ -10,7 +10,6 @@ function get_system_settings(mysqli $conn): array
         'critical_stock_threshold' => '5',
         'low_stock_threshold' => '10',
         'receipt_footer_message' => 'Thank you for bean here!',
-        'ewallet_qr_image' => '',
     ];
 
     $result = $conn->query('SELECT setting_key, setting_value FROM system_settings');

@@ -71,3 +71,21 @@ UPDATE products SET product_stocks_reference = product_stocks WHERE product_stoc
 
 ALTER TABLE product_ingredients ADD COLUMN ingredient_stock_reference DECIMAL(10,2) NULL AFTER ingredient_stock;
 UPDATE product_ingredients SET ingredient_stock_reference = ingredient_stock WHERE ingredient_stock_reference IS NULL;
+
+
+-- Dumping structure changes for table bean_there_cafe.users
+-- Lets the owner set two security questions (with hashed answers) so a forgotten
+-- password can be reset via recover_account.php without needing email/SMS delivery.
+ALTER TABLE users
+  ADD COLUMN security_question_1 VARCHAR(255) NULL AFTER status,
+  ADD COLUMN security_answer_1_hash VARCHAR(255) NULL AFTER security_question_1,
+  ADD COLUMN security_question_2 VARCHAR(255) NULL AFTER security_answer_1_hash,
+  ADD COLUMN security_answer_2_hash VARCHAR(255) NULL AFTER security_question_2;
+
+
+-- Dumping structure changes for table bean_there_cafe.transactions
+-- Lets a completed sale be voided (transaction_status = 'cancelled') with stock restored
+-- precisely: product_stocks via transaction_items, and ingredient_stock via the exact
+-- per-ingredient amounts recorded here at sale time, even if the recipe has changed since.
+ALTER TABLE transactions ADD COLUMN ingredient_usage_snapshot JSON NULL AFTER notes;
+ALTER TABLE transactions MODIFY transaction_status ENUM('completed','cancelled') NOT NULL DEFAULT 'completed';
