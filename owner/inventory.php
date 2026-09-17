@@ -393,8 +393,8 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
   <a href="users.php" class="nav-item"><i class="fas fa-users-gear"></i> User Management</a>
   <hr class="sidebar-divider"/>
   <div class="sidebar-section-label">Settings</div>
-  <a href="settings.php" class="nav-item"><i class="fas fa-gear"></i>  Log</a>
-  <a href="backup.php" class="nav-item"><i class="fas fa-database"></i> Data Backup</a>
+  <a href="settings.php" class="nav-item"><i class="fas fa-gear"></i>  System Settings</a>
+  <a href="backup.php" class="nav-item"><i class="fas fa-database"></i> Log</a>
   <div class="sidebar-footer">
     <p>SmartStock v1.0<br />Bean There Café<br />ISO/IEC 25010 Compliant</p>
   </div>
