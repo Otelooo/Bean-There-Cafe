@@ -22,17 +22,17 @@
 
 LOCK TABLES `product_category` WRITE;
 /*!40000 ALTER TABLE `product_category` DISABLE KEYS */;
-INSERT INTO `product_category` (`product_category_id`, `product_category`) VALUES (11,'Appetizers');
-INSERT INTO `product_category` (`product_category_id`, `product_category`) VALUES (12,'Burgers & Sandwiches');
-INSERT INTO `product_category` (`product_category_id`, `product_category`) VALUES (13,'Rice Meals');
-INSERT INTO `product_category` (`product_category_id`, `product_category`) VALUES (17,'Seafood');
-INSERT INTO `product_category` (`product_category_id`, `product_category`) VALUES (18,'Wings & Rice');
-INSERT INTO `product_category` (`product_category_id`, `product_category`) VALUES (23,'Pasta Dishes');
-INSERT INTO `product_category` (`product_category_id`, `product_category`) VALUES (24,'Pizza');
-INSERT INTO `product_category` (`product_category_id`, `product_category`) VALUES (25,'Iced And Hot Drinks');
-INSERT INTO `product_category` (`product_category_id`, `product_category`) VALUES (28,'Ice Blended Coffee Based Drinks');
-INSERT INTO `product_category` (`product_category_id`, `product_category`) VALUES (29,'Ice Blended Cream Based Drinks');
-INSERT INTO `product_category` (`product_category_id`, `product_category`) VALUES (38,'Pastries');
+INSERT INTO `product_category` (`product_category_id`, `product_category`, `category_group`) VALUES (11,'Appetizers','food');
+INSERT INTO `product_category` (`product_category_id`, `product_category`, `category_group`) VALUES (12,'Burgers & Sandwiches','food');
+INSERT INTO `product_category` (`product_category_id`, `product_category`, `category_group`) VALUES (13,'Rice Meals','food');
+INSERT INTO `product_category` (`product_category_id`, `product_category`, `category_group`) VALUES (17,'Seafood','food');
+INSERT INTO `product_category` (`product_category_id`, `product_category`, `category_group`) VALUES (18,'Wings & Rice','food');
+INSERT INTO `product_category` (`product_category_id`, `product_category`, `category_group`) VALUES (23,'Pasta Dishes','food');
+INSERT INTO `product_category` (`product_category_id`, `product_category`, `category_group`) VALUES (24,'Pizza','food');
+INSERT INTO `product_category` (`product_category_id`, `product_category`, `category_group`) VALUES (25,'Iced And Hot Drinks','drink');
+INSERT INTO `product_category` (`product_category_id`, `product_category`, `category_group`) VALUES (28,'Ice Blended Coffee Based Drinks','drink');
+INSERT INTO `product_category` (`product_category_id`, `product_category`, `category_group`) VALUES (29,'Ice Blended Cream Based Drinks','drink');
+INSERT INTO `product_category` (`product_category_id`, `product_category`, `category_group`) VALUES (38,'Pastries','food');
 /*!40000 ALTER TABLE `product_category` ENABLE KEYS */;
 UNLOCK TABLES;
 

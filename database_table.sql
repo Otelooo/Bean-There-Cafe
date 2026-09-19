@@ -25,6 +25,7 @@ DROP TABLE IF EXISTS `product_category`;
 CREATE TABLE `product_category` (
   `product_category_id` int NOT NULL AUTO_INCREMENT,
   `product_category` varchar(50) NOT NULL,
+  `category_group` enum('food','drink') NOT NULL DEFAULT 'food',
   PRIMARY KEY (`product_category_id`)
 ) ENGINE=InnoDB AUTO_INCREMENT=39 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;

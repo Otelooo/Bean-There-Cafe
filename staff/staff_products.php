@@ -316,9 +316,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     } elseif ($action === 'add_category') {
         $categoryName = format_category_name($_POST['category_name'] ?? '');
+      $categoryGroup = $_POST['category_group'] ?? 'food';
         if ($categoryName === '') {
             $msg = 'Please enter a category name.';
             $msgType = 'warn';
+      } elseif (!in_array($categoryGroup, ['food', 'drink'], true)) {
+        $msg = 'Please choose a valid category group.';
+        $msgType = 'warn';
         } else {
             $check = $conn->prepare('SELECT product_category_id FROM product_category WHERE LOWER(product_category) = LOWER(?)');
             $check->bind_param('s', $categoryName);
@@ -330,8 +334,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $msg = 'That category already exists.';
                 $msgType = 'warn';
             } else {
-                $insert = $conn->prepare('INSERT INTO product_category (product_category) VALUES (?)');
-                $insert->bind_param('s', $categoryName);
+              $insert = $conn->prepare('INSERT INTO product_category (product_category, category_group) VALUES (?, ?)');
+              $insert->bind_param('ss', $categoryName, $categoryGroup);
                 $insert->execute();
                 $insert->close();
                 $msg = 'Category added.';
@@ -340,9 +344,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif ($action === 'edit_category') {
         $categoryId = (int)($_POST['category_id'] ?? 0);
         $categoryName = format_category_name($_POST['category_name'] ?? '');
+      $categoryGroup = $_POST['category_group'] ?? 'food';
         if ($categoryId <= 0 || $categoryName === '') {
             $msg = 'Please enter a category name.';
             $msgType = 'warn';
+      } elseif (!in_array($categoryGroup, ['food', 'drink'], true)) {
+        $msg = 'Please choose a valid category group.';
+        $msgType = 'warn';
         } else {
             $check = $conn->prepare('SELECT product_category_id FROM product_category WHERE LOWER(product_category) = LOWER(?) AND product_category_id != ?');
             $check->bind_param('si', $categoryName, $categoryId);
@@ -354,8 +362,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $msg = 'That category already exists.';
                 $msgType = 'warn';
             } else {
-                $update = $conn->prepare('UPDATE product_category SET product_category = ? WHERE product_category_id = ?');
-                $update->bind_param('si', $categoryName, $categoryId);
+                $update = $conn->prepare('UPDATE product_category SET product_category = ?, category_group = ? WHERE product_category_id = ?');
+                $update->bind_param('ssi', $categoryName, $categoryGroup, $categoryId);
                 $update->execute();
                 $update->close();
                 $msg = 'Category updated.';
@@ -553,7 +561,7 @@ $displayName = $_SESSION['username'] ?? 'Staff';
 $initials = strtoupper(substr($displayName, 0, 2));
 
 $categories = [];
-$catResult = $conn->query('SELECT product_category_id, product_category FROM product_category ORDER BY product_category');
+$catResult = $conn->query('SELECT product_category_id, product_category, category_group FROM product_category ORDER BY product_category');
 while ($row = $catResult->fetch_assoc()) {
     $categories[] = $row;
 }
@@ -1011,7 +1019,7 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
 
     <div id="category-list" style="margin-bottom:16px;max-height:240px;overflow-y:auto;">
       <?php foreach ($categories as $cat): ?>
-        <div class="category-row" data-category-id="<?= (int)$cat['product_category_id'] ?>" data-category-name="<?= htmlspecialchars($cat['product_category'], ENT_QUOTES) ?>" style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--cream-dark);">
+        <div class="category-row" data-category-id="<?= (int)$cat['product_category_id'] ?>" data-category-name="<?= htmlspecialchars($cat['product_category'], ENT_QUOTES) ?>" data-category-group="<?= htmlspecialchars($cat['category_group'], ENT_QUOTES) ?>" style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--cream-dark);">
           <span style="flex:1;font-size:13px;"><?= htmlspecialchars($cat['product_category']) ?></span>
           <button type="button" class="tbl-btn tbl-btn-edit" onclick="startEditCategory(this)">Edit</button>
           <form method="POST" action="staff_products.php" style="display:contents;" onsubmit="return confirmSubmit(event, 'Delete category &quot;<?= htmlspecialchars($cat['product_category'], ENT_QUOTES) ?>&quot;? Products still using it will need a new category first.', 'Delete', true)">
@@ -1036,6 +1044,13 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
             <option value="<?= htmlspecialchars($cat['product_category']) ?>"></option>
           <?php endforeach; ?>
         </datalist>
+      </div>
+      <div class="modal-field">
+        <label>Category Type</label>
+        <select name="category_group" required>
+          <option value="food">Food</option>
+          <option value="drink">Drink</option>
+        </select>
       </div>
       <button type="submit" class="btn-modal-primary"><i class="fas fa-plus" style="margin-right:6px;"></i>Add Category</button>
     </form>
@@ -1469,11 +1484,16 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
     const originalHtml = row.innerHTML;
     const id = row.dataset.categoryId;
     const currentName = row.dataset.categoryName;
+    const currentGroup = row.dataset.categoryGroup || 'food';
     row.innerHTML = `
       <form method="POST" action="staff_products.php" style="display:flex;gap:8px;align-items:center;flex:1;" onsubmit="return confirmSubmit(event, 'Rename this category to \\'' + this.category_name.value.trim() + '\\'?', 'Save')">
         <input type="hidden" name="action" value="edit_category">
         <input type="hidden" name="category_id" value="${id}">
         <input type="text" name="category_name" value="${currentName.replace(/"/g, '&quot;')}" style="flex:1;padding:7px 10px;border-radius:8px;border:1.5px solid var(--cream-dark);background:var(--cream);font-family:var(--font-body);font-size:13px;color:var(--charcoal);" required />
+        <select name="category_group" style="padding:7px 8px;border-radius:8px;border:1.5px solid var(--cream-dark);background:var(--cream);font-family:var(--font-body);font-size:13px;color:var(--charcoal);" required>
+          <option value="food" ${currentGroup === 'food' ? 'selected' : ''}>Food</option>
+          <option value="drink" ${currentGroup === 'drink' ? 'selected' : ''}>Drink</option>
+        </select>
         <button type="submit" class="tbl-btn tbl-btn-edit">Save</button>
         <button type="button" class="tbl-btn tbl-btn-del" data-cancel-edit>Cancel</button>
       </form>

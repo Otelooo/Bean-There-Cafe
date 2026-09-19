@@ -394,7 +394,7 @@ $displayName = $_SESSION['username'] ?? 'Owner';
 $initials = strtoupper(substr($displayName, 0, 2));
 
 $categories = [];
-$catResult = $conn->query('SELECT product_category_id, product_category FROM product_category ORDER BY product_category');
+$catResult = $conn->query('SELECT product_category_id, product_category, category_group FROM product_category ORDER BY product_category');
 while ($row = $catResult->fetch_assoc()) {
     $categories[] = $row;
 }
@@ -432,7 +432,7 @@ while ($row = $variantResult->fetch_assoc()) {
 
 $products = [];
 $prodResult = $conn->query('
-    SELECT p.product_id, p.product_name, p.product_selling_price, p.product_stocks, p.product_category_id, pc.product_category, p.product_image, p.product_type, p.sugar_level_options
+    SELECT p.product_id, p.product_name, p.product_selling_price, p.product_stocks, p.product_category_id, pc.product_category, pc.category_group, p.product_image, p.product_type, p.sugar_level_options
     FROM products p
     JOIN product_category pc ON pc.product_category_id = p.product_category_id
     ORDER BY pc.product_category, p.product_name
@@ -448,6 +448,7 @@ while ($row = $prodResult->fetch_assoc()) {
         'sugar_levels' => json_decode($row['sugar_level_options'] ?? '[]', true) ?: [],
         'category_id' => (int)$row['product_category_id'],
         'category_name' => $row['product_category'],
+        'category_group' => $row['category_group'],
         'image' => $row['product_image'] ? '../' . $row['product_image'] : null,
         'flavor_options' => $flavorOptionsByProduct[$pid] ?? [],
         'variants' => $variantsByProduct[$pid] ?? [],
@@ -2319,12 +2320,18 @@ while ($row = $prodResult->fetch_assoc()) {
           const orderTypeLabel = orderType === 'takeout' ? 'TAKEOUT' : 'DINE-IN';
           const notesText = document.getElementById('checkout-notes-input').value.trim();
 
-          const itemsHtml = cart.map(i => `
+          const foodItems = cart.filter(i => i.category_group !== 'drink');
+          const drinkItems = cart.filter(i => i.category_group === 'drink');
+          const renderReceiptSection = (title, items) => items.length ? `
+    <div style="font-weight: 800; font-size: 13px; letter-spacing: 1px; margin: 8px 0 4px;">${title}</div>
+    ${items.map(i => `
     <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
       <span>${itemLabel(i)} x${i.qty}</span>
       <span>₱${(i.price * i.qty).toLocaleString()}</span>
     </div>
-  `).join('');
+    `).join('')}
+  ` : '';
+          const itemsHtml = renderReceiptSection('FOOD', foodItems) + renderReceiptSection('DRINKS', drinkItems);
 
           return `
     ${transactionId ? `<div style="text-align:center;font-size:11px;color:#999;margin-bottom:10px;">Transaction #${transactionId}</div>` : ''}
@@ -2502,6 +2509,7 @@ while ($row = $prodResult->fetch_assoc()) {
           // Print an isolated copy instead of the page modal. This guarantees that every line
           // item and total is included, without dashboard/page styles interfering with the print.
           const printableReceipt = receipt.cloneNode(true);
+          printableReceipt.classList.add('receipt-fit-text');
           printableReceipt.querySelectorAll('#receipt-back-row, #receipt-confirm-btn, #receipt-print-btn, #receipt-done-btn, #receipt-cancel-sale-btn').forEach(el => el.remove());
 
           const printDoc = printWindow.document;
@@ -2512,14 +2520,24 @@ while ($row = $prodResult->fetch_assoc()) {
             * { box-sizing: border-box; }
             html, body { width:80mm; margin:0; padding:0; background:#fff; color:#000; }
             .modal-box { width:80mm !important; max-width:80mm !important; min-height:0; max-height:none !important; overflow:visible !important; margin:0 !important; padding:3mm !important; border:0 !important; border-radius:0 !important; box-shadow:none !important; background:#fff !important; font-family:Arial,sans-serif; }
+            #receipt-print-root .receipt-fit-text, #receipt-print-root .receipt-fit-text * { font-size: var(--receipt-font-size, 14px) !important; line-height: 1.15 !important; }
             .pos-logo { display:none !important; }
           </style></head><body><div id="receipt-print-root"></div></body></html>`);
           printDoc.close();
           printDoc.getElementById('receipt-print-root').appendChild(printableReceipt);
 
-          // Thermal rolls have a fixed width but variable length. Measure the fully rendered
-          // receipt (including prices, total, payment and change) then make one portrait page.
+          // Keep the receipt on one page by reducing text size until it fits a standard
+          // printable height. Thermal printers still receive a custom-height page when the
+          // order is exceptionally long, so no lines are clipped or moved to a second page.
           setTimeout(() => {
+            const fitRoot = printDoc.querySelector('.receipt-fit-text');
+            const maxPageHeight = 1050;
+            let fontSize = 14;
+            fitRoot.style.setProperty('--receipt-font-size', `${fontSize}px`);
+            while (printDoc.documentElement.scrollHeight > maxPageHeight && fontSize > 7) {
+              fontSize -= 0.5;
+              fitRoot.style.setProperty('--receipt-font-size', `${fontSize}px`);
+            }
             const pageHeight = Math.max(360, Math.ceil(printDoc.documentElement.scrollHeight + 12));
             printDoc.getElementById('receipt-page-style').textContent += `@page { size: 80mm ${pageHeight}px; margin: 0; }`;
             printWindow.focus();
