@@ -121,6 +121,7 @@ CREATE TABLE `expenses` (
   `expense_price` decimal(10,2) NOT NULL,
   `expense_time` datetime NOT NULL,
   `expense_category` enum('drinks','foods','prepared_product') NOT NULL,
+  `inserted_by` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`expense_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
