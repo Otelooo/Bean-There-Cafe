@@ -1237,6 +1237,7 @@ $initialReport = build_staff_sales_report($conn, $staffUserId, 'daily', 0, $toda
         <span class="nav-badge"><?= $ingredientAlertCount ?></span>
       <?php endif; ?>
     </a>
+    <a href="staff_expenses.php" class="nav-item"><i class="fas fa-wallet"></i> Expenses</a>
     <a href="staff_reports.php" class="nav-item active"><i class="fas fa-chart-bar"></i> Sales Report</a>
     <hr class="sidebar-divider" />
     <div class="sidebar-footer">

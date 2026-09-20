@@ -31,8 +31,7 @@ CREATE TABLE `product_category` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
--- Table structure for table `product_ingredient_items`
---
+-- Table structure for table `product_ingredient_ite
 
 DROP TABLE IF EXISTS `product_ingredient_items`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
@@ -110,6 +109,23 @@ CREATE TABLE `product_variants` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
+-- Table structure for table `expenses`
+--
+
+DROP TABLE IF EXISTS `expenses`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!50503 SET character_set_client = utf8mb4 */;
+CREATE TABLE `expenses` (
+  `expense_id` int NOT NULL AUTO_INCREMENT,
+  `expense_name` varchar(100) NOT NULL,
+  `expense_price` decimal(10,2) NOT NULL,
+  `expense_time` datetime NOT NULL,
+  `expense_category` enum('drinks','foods','prepared_product') NOT NULL,
+  PRIMARY KEY (`expense_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
 -- Table structure for table `products`
 --
 
@@ -122,7 +138,6 @@ CREATE TABLE `products` (
   `product_category_id` int NOT NULL,
   `product_stocks` int DEFAULT NULL,
   `product_stocks_reference` int DEFAULT NULL,
-  `product_cost` decimal(10,2) NOT NULL,
   `product_selling_price` decimal(10,2) NOT NULL,
   `product_supplier_id` int NOT NULL,
   `product_type` enum('made_to_order','prepared') NOT NULL DEFAULT 'made_to_order',

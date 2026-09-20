@@ -604,6 +604,7 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
       <span class="nav-badge"><?= $ingredientAlertCount ?></span>
     <?php endif; ?>
   </a>
+  <a href="staff_expenses.php" class="nav-item"><i class="fas fa-wallet"></i> Expenses</a>
   <a href="staff_reports.php" class="nav-item"><i class="fas fa-chart-bar"></i> Sales Report</a>
   <hr class="sidebar-divider" />
   <div class="sidebar-footer">

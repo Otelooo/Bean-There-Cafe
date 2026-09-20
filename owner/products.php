@@ -237,7 +237,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $price = $_POST['price'] ?? '';
         $isPrepared = $productType === 'prepared';
         $stock = $_POST['stock'] ?? '';
-        $cost = $_POST['cost'] ?? '';
         $allowedSugarLevels = ['0%', '25%', '50%', '75%', '100%'];
         $sugarLevels = $isPrepared ? [] : array_values(array_intersect($allowedSugarLevels, (array)($_POST['sugar_level_options'] ?? [])));
         $sugarLevelsJson = $sugarLevels ? json_encode($sugarLevels) : null;
@@ -251,9 +250,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } elseif ($isPrepared && (!is_numeric($stock) || (int)$stock < 0)) {
             $msg = 'Please fill in all product fields with valid values.';
             $msgType = 'warn';
-        } elseif (!is_numeric($cost) || (float)$cost < 0) {
-            $msg = 'Please fill in all product fields with valid values.';
-            $msgType = 'warn';
         } else {
             try {
                 $categoryId = resolve_category_id($conn, $_POST['category'] ?? '');
@@ -262,7 +258,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Made to Order products have no stock count of their own — availability is governed
                 // by the recipe's ingredient stock instead (see the ingredient check in transactions.php).
                 $stockInt = $isPrepared ? (int)$stock : 0;
-                $costVal = (float)$cost;
 
                 if ($isPrepared) {
                     $supplierId = resolve_supplier_id($conn, $_POST['supplier_name'] ?? '', $_POST['supplier_contact'] ?? '');
@@ -271,8 +266,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 if ($action === 'add') {
-                    $stmt = $conn->prepare('INSERT INTO products (product_name, product_category_id, product_stocks, product_stocks_reference, product_cost, product_selling_price, product_supplier_id, product_type, sugar_level_options, product_image) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-                    $stmt->bind_param('siiiddisss', $name, $categoryId, $stockInt, $stockInt, $costVal, $priceVal, $supplierId, $productType, $sugarLevelsJson, $newImagePath);
+                    $stmt = $conn->prepare('INSERT INTO products (product_name, product_category_id, product_stocks, product_stocks_reference, product_selling_price, product_supplier_id, product_type, sugar_level_options, product_image) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+                    $stmt->bind_param('siiidisss', $name, $categoryId, $stockInt, $stockInt, $priceVal, $supplierId, $productType, $sugarLevelsJson, $newImagePath);
                     $stmt->execute();
                     $newProductId = (int)$stmt->insert_id;
                     $stmt->close();
@@ -293,14 +288,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $oldImage = $oldStmt->get_result()->fetch_assoc()['product_image'] ?? null;
                         $oldStmt->close();
 
-                        $stmt = $conn->prepare('UPDATE products SET product_name = ?, product_category_id = ?, product_stocks = ?, product_stocks_reference = ?, product_cost = ?, product_selling_price = ?, product_supplier_id = ?, product_type = ?, sugar_level_options = ?, product_image = ? WHERE product_id = ?');
-                        $stmt->bind_param('siiiddisssi', $name, $categoryId, $stockInt, $stockInt, $costVal, $priceVal, $supplierId, $productType, $sugarLevelsJson, $newImagePath, $productId);
+                        $stmt = $conn->prepare('UPDATE products SET product_name = ?, product_category_id = ?, product_stocks = ?, product_stocks_reference = ?, product_selling_price = ?, product_supplier_id = ?, product_type = ?, sugar_level_options = ?, product_image = ? WHERE product_id = ?');
+                        $stmt->bind_param('siiidisssi', $name, $categoryId, $stockInt, $stockInt, $priceVal, $supplierId, $productType, $sugarLevelsJson, $newImagePath, $productId);
                         $stmt->execute();
                         $stmt->close();
                         delete_product_image_file($oldImage);
                     } else {
-                        $stmt = $conn->prepare('UPDATE products SET product_name = ?, product_category_id = ?, product_stocks = ?, product_stocks_reference = ?, product_cost = ?, product_selling_price = ?, product_supplier_id = ?, product_type = ?, sugar_level_options = ? WHERE product_id = ?');
-                        $stmt->bind_param('siiiddissi', $name, $categoryId, $stockInt, $stockInt, $costVal, $priceVal, $supplierId, $productType, $sugarLevelsJson, $productId);
+                        $stmt = $conn->prepare('UPDATE products SET product_name = ?, product_category_id = ?, product_stocks = ?, product_stocks_reference = ?, product_selling_price = ?, product_supplier_id = ?, product_type = ?, sugar_level_options = ? WHERE product_id = ?');
+                        $stmt->bind_param('siiidissi', $name, $categoryId, $stockInt, $stockInt, $priceVal, $supplierId, $productType, $sugarLevelsJson, $productId);
                         $stmt->execute();
                         $stmt->close();
                     }
@@ -606,7 +601,7 @@ while ($row = $variantResult->fetch_assoc()) {
 
 $products = [];
 $prodResult = $conn->query('
-    SELECT p.product_id, p.product_name, p.product_stocks, p.product_stocks_reference, p.product_cost, p.product_selling_price,
+    SELECT p.product_id, p.product_name, p.product_stocks, p.product_stocks_reference, p.product_selling_price,
            p.product_category_id, pc.product_category, p.product_image, p.product_type, p.sugar_level_options, s.supplier_name, s.supplier_contact
     FROM products p
     JOIN product_category pc ON pc.product_category_id = p.product_category_id
@@ -627,7 +622,6 @@ while ($row = $prodResult->fetch_assoc()) {
         'sugar_levels' => json_decode($row['sugar_level_options'] ?? '[]', true) ?: [],
         'stock' => $stock,
         'level' => stock_level($stock, $reference, $criticalStockThreshold, $lowStockThreshold),
-        'cost' => (float)$row['product_cost'],
         'price' => (float)$row['product_selling_price'],
         'image' => $row['product_image'] ? '../' . $row['product_image'] : null,
         'supplier_name' => $row['supplier_name'],
@@ -883,6 +877,7 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
       <span class="nav-badge"><?= $ingredientAlertCount ?></span>
     <?php endif; ?>
   </a>
+  <a href="expenses.php" class="nav-item"><i class="fas fa-wallet"></i> Expenses</a>
   <a href="reports.php" class="nav-item"><i class="fas fa-chart-bar"></i> Sales Report</a>
   <a href="users.php" class="nav-item"><i class="fas fa-users-gear"></i> User Management</a>
   <hr class="sidebar-divider"/>
@@ -898,7 +893,7 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
   <div class="page-strip">
     <div>
       <h1><i class="fas fa-boxes-stacked" style="color:var(--gold);font-size:22px;margin-right:10px;"></i>Products</h1>
-      <div class="sub">Track stock levels, unit costs, and supplier contacts</div>
+      <div class="sub">Track stock levels and supplier contacts</div>
     </div>
     <div style="display:flex;gap:10px;">
       <button class="btn-outline" onclick="openModal('modal-add-category')"><i class="fas fa-tag"></i> Categories</button>
@@ -922,7 +917,7 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
     <div class="content-row">
       <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>Image</th><th>Product Name</th><th>Category</th><th>Stock</th><th>Unit Cost</th><th>Selling Price</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Image</th><th>Product Name</th><th>Category</th><th>Stock</th><th>Selling Price</th><th>Actions</th></tr></thead>
           <tbody id="product-tbody"></tbody>
         </table>
       </div>
@@ -970,7 +965,6 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
         </select>
       </div>
       <div class="modal-field"><label>Selling Price (₱)</label><input type="number" name="price" min="0" step="0.01" placeholder="0.00" required /></div>
-      <div class="modal-field"><label>Unit Cost (₱)</label><input type="number" name="cost" min="0" step="0.01" placeholder="0.00" required /></div>
 
       <div class="modal-field">
         <label>Sizes / Options <span style="text-transform:none;font-weight:400;">(optional — leave empty for a single-price product)</span></label>
@@ -1083,7 +1077,6 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
         </select>
       </div>
       <div class="modal-field"><label>Selling Price (₱)</label><input type="number" name="price" id="edit-price" min="0" step="0.01" required /></div>
-      <div class="modal-field"><label>Unit Cost (₱)</label><input type="number" name="cost" id="edit-cost" min="0" step="0.01" required /></div>
 
       <div class="modal-field">
         <label>Sizes / Options <span style="text-transform:none;font-weight:400;">(optional — leave empty for a single-price product)</span></label>
@@ -1310,7 +1303,7 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
     if (!tbody) return;
 
     if (products.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#aaa;padding:24px 8px;">No products yet. Click "Add Product" to add your first item.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#aaa;padding:24px 8px;">No products yet. Click "Add Product" to add your first item.</td></tr>';
       return;
     }
 
@@ -1322,7 +1315,7 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
     });
 
     if (filtered.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#aaa;padding:24px 8px;">No products match your filters.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#aaa;padding:24px 8px;">No products match your filters.</td></tr>';
       return;
     }
 
@@ -1334,7 +1327,6 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
         <td style="font-weight:600;">${p.name}${isMotd ? ' <span class="tag tag-supply" style="margin-left:4px;">Made to Order</span>' : ''}</td>
         <td><span class="tag ${p.tag_class}">${p.category_name}</span></td>
         <td>${isMotd ? '<span class="text-muted">—</span>' : `<div class="stock-indicator stock-${p.level}"><div class="stock-dot"></div>${p.stock}</div>`}</td>
-        <td class="text-mono">${money(p.cost)}</td>
         <td class="text-mono">${money(p.price)}</td>
         <td style="display:flex;gap:6px;align-items:center;">
           <button class="tbl-btn tbl-btn-edit" onclick="openEditModal(${p.id})">Edit</button>
@@ -1372,7 +1364,6 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
     toggleProductTypeFields(typeSelect, 'edit-prepared-fields', 'edit-madetoorder-fields');
 
     document.getElementById('edit-stock').value = p.type === 'prepared' ? p.stock : '';
-    document.getElementById('edit-cost').value = p.cost;
     document.getElementById('edit-supplier-name').value = p.type === 'prepared' ? p.supplier_name : '';
     document.getElementById('edit-supplier-contact').value = p.type === 'prepared' ? p.supplier_contact : '';
     document.querySelectorAll('#edit-sugar-level-options input').forEach(input => { input.checked = (p.sugar_levels || []).includes(input.value); });

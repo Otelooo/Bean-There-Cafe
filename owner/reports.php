@@ -1239,6 +1239,7 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
         <span class="nav-badge"><?= $ingredientAlertCount ?></span>
       <?php endif; ?>
     </a>
+    <a href="expenses.php" class="nav-item"><i class="fas fa-wallet"></i> Expenses</a>
     <a href="reports.php" class="nav-item active"><i class="fas fa-chart-bar"></i> Sales Report</a>
     <a href="users.php" class="nav-item"><i class="fas fa-users-gear"></i> User Management</a>
     <hr class="sidebar-divider" />

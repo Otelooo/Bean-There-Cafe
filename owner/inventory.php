@@ -389,6 +389,7 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
       <span class="nav-badge"><?= $ingredientAlertCount ?></span>
     <?php endif; ?>
   </a>
+  <a href="expenses.php" class="nav-item"><i class="fas fa-wallet"></i> Expenses</a>
   <a href="reports.php" class="nav-item"><i class="fas fa-chart-bar"></i> Sales Report</a>
   <a href="users.php" class="nav-item"><i class="fas fa-users-gear"></i> User Management</a>
   <hr class="sidebar-divider"/>

@@ -1657,6 +1657,7 @@ while ($row = $prodResult->fetch_assoc()) {
         <span class="nav-badge"><?= $ingredientAlertCount ?></span>
       <?php endif; ?>
     </a>
+    <a href="staff_expenses.php" class="nav-item"><i class="fas fa-wallet"></i> Expenses</a>
     <a href="staff_reports.php" class="nav-item"><i class="fas fa-chart-bar"></i>Sales Report</a>
     <hr class="sidebar-divider" />
     
