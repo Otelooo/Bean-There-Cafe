@@ -912,7 +912,7 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
           <option value="<?= (int)$cat['product_category_id'] ?>"><?= htmlspecialchars($cat['product_category']) ?></option>
         <?php endforeach; ?>
       </select>
-      <select class="filter-select" id="product-stock-filter" onchange="filterProducts()"><option value="">All Stock Levels</option><option value="ok">OK</option><option value="low">Low</option><option value="crit">Critical</option></select>
+      <select class="filter-select" id="product-stock-filter" onchange="filterProducts()"><option value="">All Stock Levels</option><option value="ok">In Stock</option><option value="low">Low Stock</option><option value="crit">Critical Stock</option></select>
     </div>
     <div class="content-row">
       <div class="table-wrap">
@@ -923,9 +923,9 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
       </div>
       <div class="legend-card">
         <div class="legend-card-title">Legend</div>
-        <div class="legend-item"><span class="legend-dot ok"></span><div><div class="legend-label">OK</div><div class="legend-desc">Stock at a healthy level</div></div></div>
-        <div class="legend-item"><span class="legend-dot low"></span><div><div class="legend-label">Low</div><div class="legend-desc">Running low, reorder soon</div></div></div>
-        <div class="legend-item"><span class="legend-dot crit"></span><div><div class="legend-label">Critical</div><div class="legend-desc">Reorder immediately</div></div></div>
+        <div class="legend-item"><span class="legend-dot ok"></span><div><div class="legend-label">In Stock</div><div class="legend-desc">Stock level is sufficient</div></div></div>
+        <div class="legend-item"><span class="legend-dot low"></span><div><div class="legend-label">Low Stock</div><div class="legend-desc">Consider restocking soon</div></div></div>
+        <div class="legend-item"><span class="legend-dot crit"></span><div><div class="legend-label">Critical Stock</div><div class="legend-desc">Restock immediately</div></div></div>
       </div>
     </div>
   </div>
@@ -1310,7 +1310,7 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
     const filtered = products.filter(p => {
       const s = !search || p.name.toLowerCase().includes(search.toLowerCase()) || p.supplier_name.toLowerCase().includes(search.toLowerCase());
       const c = !catId || String(p.category_id) === String(catId);
-      const l = !level || p.level === level;
+      const l = !level || (p.type !== 'made_to_order' && p.level === level);
       return s && c && l;
     });
 

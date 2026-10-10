@@ -101,6 +101,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'critical_stock_threshold' => (string)(float)$criticalThreshold,
                 'low_stock_threshold' => (string)(float)$lowThreshold,
                 'receipt_footer_message' => $receiptFooter,
+                'allow_staff_history_export' => ($_POST['allow_staff_history_export'] ?? '0') === '1' ? '1' : '0',
+                'allow_staff_extended_history_filters' => ($_POST['allow_staff_extended_history_filters'] ?? '0') === '1' ? '1' : '0',
             ];
 
             $stmt = $conn->prepare('INSERT INTO system_settings (setting_key, setting_value) VALUES (?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)');
@@ -437,6 +439,24 @@ $stmt->close();
           <div class="settings-field">
             <label>Footer Message</label>
             <input type="text" name="receipt_footer_message" value="<?= htmlspecialchars($settings['receipt_footer_message']) ?>" placeholder="e.g. Thank you for bean here!">
+          </div>
+        </div>
+
+        <div class="settings-card">
+          <div class="settings-card-title"><i class="fas fa-user-shield"></i>Staff Transaction History Access</div>
+          <div class="settings-card-sub">Choose which transaction-history features staff can use. By default, staff see only today's transactions and cannot export PDFs.</div>
+          <div class="settings-field">
+            <label style="display:flex;align-items:center;gap:9px;text-transform:none;letter-spacing:0;color:var(--charcoal);font-size:13px;">
+              <input type="checkbox" name="allow_staff_history_export" value="1"<?= $settings['allow_staff_history_export'] === '1' ? ' checked' : '' ?> style="width:auto;margin:0;">
+              Allow staff to export transaction history as PDF
+            </label>
+          </div>
+          <div class="settings-field">
+            <label style="display:flex;align-items:center;gap:9px;text-transform:none;letter-spacing:0;color:var(--charcoal);font-size:13px;">
+              <input type="checkbox" name="allow_staff_extended_history_filters" value="1"<?= $settings['allow_staff_extended_history_filters'] === '1' ? ' checked' : '' ?> style="width:auto;margin:0;">
+              Allow staff to use date, time, period, and category filters
+            </label>
+            <div class="hint">When disabled, staff transaction history is limited to the current day.</div>
           </div>
         </div>
       </div>

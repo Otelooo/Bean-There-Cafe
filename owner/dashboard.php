@@ -49,14 +49,14 @@ $stmt->close();
 
 $recentTransactions = [];
 $stmt = $conn->prepare("
-    SELECT t.transaction_id, t.transaction_total, t.payment_method, t.transaction_status,
+    SELECT t.transaction_id, t.transaction_total, t.payment_method, t.transaction_status, t.order_status,
            COALESCE(t.cashier_username, u.username, 'Deleted user') AS username,
            GROUP_CONCAT(CONCAT(ti.quantity, '\xc3\x97', COALESCE(ti.product_name_snapshot, p.product_name, 'Deleted product')) SEPARATOR ', ') AS items_summary
     FROM transactions t
     LEFT JOIN users u ON u.user_id = t.user_id
     LEFT JOIN transaction_items ti ON ti.transaction_id = t.transaction_id
     LEFT JOIN products p ON p.product_id = ti.product_id
-    GROUP BY t.transaction_id, t.transaction_total, t.payment_method, t.transaction_status, t.cashier_username, u.username
+    GROUP BY t.transaction_id, t.transaction_total, t.payment_method, t.transaction_status, t.order_status, t.cashier_username, u.username
     ORDER BY t.transaction_date DESC
     LIMIT 5
 ");
@@ -1436,8 +1436,9 @@ if ($maxMonthlyTotal <= 0) {
               <?php else: ?>
                 <?php foreach ($recentTransactions as $tx): ?>
                   <?php
-                    $statusLabel = $tx['transaction_status'] === 'completed' ? 'Completed' : 'Cancelled';
-                    $statusPillClass = $tx['transaction_status'] === 'completed' ? 'pill-success' : 'pill-red';
+                    $isCancelled = ($tx['transaction_status'] === 'cancelled' || ($tx['order_status'] ?? '') === 'cancelled');
+                    $statusLabel = $isCancelled ? 'Cancelled' : 'Completed';
+                    $statusPillClass = $isCancelled ? 'pill-red' : 'pill-success';
                     $methodLabel = $tx['payment_method'] === 'online' ? 'Online' : 'Cash';
                   ?>
                   <tr>

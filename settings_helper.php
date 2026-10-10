@@ -10,6 +10,8 @@ function get_system_settings(mysqli $conn): array
         'critical_stock_threshold' => '5',
         'low_stock_threshold' => '10',
         'receipt_footer_message' => 'Thank you for bean here!',
+        'allow_staff_history_export' => '0',
+        'allow_staff_extended_history_filters' => '0',
     ];
 
     $result = $conn->query('SELECT setting_key, setting_value FROM system_settings');

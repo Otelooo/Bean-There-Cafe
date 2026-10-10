@@ -119,7 +119,7 @@ function expense_datetime_value(string $value): string
     .user { display:flex; align-items:center; gap:8px; background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.10); border-radius:99px; padding:5px 14px 5px 5px; cursor:pointer; }
     .avatar { width:28px; height:28px; border-radius:50%; font-size:12px; display:flex; align-items:center; justify-content:center; }
     .logout { display:flex; align-items:center; gap:6px; font-size:12px; padding:6px 14px; }
-    nav { top:var(--header); width:var(--sidebar); overflow-y:auto; display:flex; flex-direction:column; }
+    nav { top:var(--header); width:var(--sidebar); padding-top:0; overflow-y:auto; display:flex; flex-direction:column; }
     .section { padding:20px 20px 6px; font-size:9.5px; letter-spacing:2px; color:rgba(245,236,215,.3); }
     .nav-item { gap:12px; padding:11px 20px; color:rgba(245,236,215,.6); font-size:13.5px; font-weight:500; border-left:3px solid transparent; }
     .nav-item i { width:20px; text-align:center; font-size:16px; }

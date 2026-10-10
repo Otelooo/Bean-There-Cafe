@@ -277,7 +277,7 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
     .stock-crit .stock-dot { background:var(--red-soft); } .stock-crit { color:var(--red-soft); }
     .content-row { display:flex; gap:20px; align-items:flex-start; }
     .content-row .table-wrap { flex:1; min-width:0; }
-    .legend-card { width:190px; flex-shrink:0; background:var(--cream); border:1.5px solid var(--cream-dark); border-radius:var(--radius-lg); box-shadow:var(--shadow-sm); padding:16px 18px; }
+    .legend-card { width:210px; flex-shrink:0; background:var(--cream); border:1.5px solid var(--cream-dark); border-radius:var(--radius-lg); box-shadow:var(--shadow-sm); padding:16px 18px; }
     .legend-card-title { font-family:var(--font-display); font-weight:700; font-size:13px; color:var(--mocha-deep); margin-bottom:12px; }
     .legend-item { display:flex; align-items:flex-start; gap:8px; margin-bottom:12px; }
     .legend-item:last-child { margin-bottom:0; }
@@ -424,7 +424,7 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
         <i class="fas fa-magnifying-glass"></i>
         <input type="text" id="ing-search" placeholder="Search ingredients…" oninput="filterIngredients()"/>
       </div>
-      <select class="filter-select" id="ing-stock-filter" onchange="filterIngredients()"><option value="">All Stock Levels</option><option value="ok">OK</option><option value="low">Low</option><option value="crit">Critical</option></select>
+      <select class="filter-select" id="ing-stock-filter" onchange="filterIngredients()"><option value="">All Stock Levels</option><option value="ok">In Stock</option><option value="low">Low Stock</option><option value="crit">Critical Stock</option></select>
     </div>
     <div class="content-row">
       <div class="table-wrap">
@@ -435,9 +435,9 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
       </div>
       <div class="legend-card">
         <div class="legend-card-title">Legend</div>
-        <div class="legend-item"><span class="legend-dot ok"></span><div><div class="legend-label">OK</div><div class="legend-desc">Stock at a healthy level</div></div></div>
-        <div class="legend-item"><span class="legend-dot low"></span><div><div class="legend-label">Low</div><div class="legend-desc">Running low, reorder soon</div></div></div>
-        <div class="legend-item"><span class="legend-dot crit"></span><div><div class="legend-label">Critical</div><div class="legend-desc">Reorder immediately</div></div></div>
+        <div class="legend-item"><span class="legend-dot ok"></span><div><div class="legend-label">In Stock</div><div class="legend-desc">Stock level is sufficient</div></div></div>
+        <div class="legend-item"><span class="legend-dot low"></span><div><div class="legend-label">Low Stock</div><div class="legend-desc">Consider restocking soon</div></div></div>
+        <div class="legend-item"><span class="legend-dot crit"></span><div><div class="legend-label">Critical Stock</div><div class="legend-desc">Restock immediately</div></div></div>
       </div>
     </div>
   </div>
@@ -583,7 +583,7 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
     return Number(n).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
   }
 
-  const levelLabels = { ok: 'OK', low: 'Low', crit: 'Critical' };
+  const levelLabels = { ok: 'In Stock', low: 'Low Stock', crit: 'Critical Stock' };
 
   function renderIngredients(search, level) {
     const tbody = document.getElementById('ing-tbody');
@@ -672,7 +672,7 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
     document.getElementById('pr-date').textContent = new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
     document.getElementById('pr-count').textContent = sorted.length;
     document.getElementById('pr-summary').textContent =
-      `Summary: ${sorted.length} ingredient(s) — ${counts.ok} OK · ${counts.low} Low · ${counts.crit} Critical`;
+      `Summary: ${sorted.length} ingredient(s) — ${counts.ok} In Stock · ${counts.low} Low Stock · ${counts.crit} Critical Stock`;
 
     window.print();
   }

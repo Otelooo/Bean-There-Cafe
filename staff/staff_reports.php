@@ -1231,7 +1231,6 @@ $initialReport = build_staff_sales_report($conn, $staffUserId, 'daily', 0, $toda
   <a href="staff_transactions.php" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
   <a href="staff_order_queue.php" class="nav-item"><i class="fas fa-list-check"></i> Order Queue</a>
   <a href="staff_transaction_history.php" class="nav-item"><i class="fas fa-clock-rotate-left"></i> Transaction History</a>
-    <a href="staff_products.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Products</a>
     <a href="staff_inventory.php" class="nav-item"><i class="fas fa-warehouse"></i> Inventory
       <?php if ($ingredientAlertCount > 0): ?>
         <span class="nav-badge"><?= $ingredientAlertCount ?></span>

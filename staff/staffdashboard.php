@@ -56,7 +56,7 @@ $stmt->close();
 
 $recentTransactions = [];
 $stmt = $conn->prepare("
-    SELECT t.transaction_id, t.transaction_total, t.payment_method, t.transaction_status,
+    SELECT t.transaction_id, t.transaction_total, t.payment_method, t.transaction_status, t.order_status,
            COALESCE(t.cashier_username, u.username, 'Deleted user') AS username,
            GROUP_CONCAT(CONCAT(ti.quantity, '\xc3\x97', COALESCE(ti.product_name_snapshot, p.product_name, 'Deleted product')) SEPARATOR ', ') AS items_summary
     FROM transactions t
@@ -64,7 +64,7 @@ $stmt = $conn->prepare("
     LEFT JOIN transaction_items ti ON ti.transaction_id = t.transaction_id
     LEFT JOIN products p ON p.product_id = ti.product_id
     WHERE t.user_id = ?
-    GROUP BY t.transaction_id, t.transaction_total, t.payment_method, t.transaction_status, t.cashier_username, u.username
+    GROUP BY t.transaction_id, t.transaction_total, t.payment_method, t.transaction_status, t.order_status, t.cashier_username, u.username
     ORDER BY t.transaction_date DESC
     LIMIT 5
 ");
@@ -1196,7 +1196,6 @@ $ingredientAlertCount = $criticalIngredientCount + $lowIngredientCount;
   <a href="staff_transactions.php" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
   <a href="staff_order_queue.php" class="nav-item"><i class="fas fa-list-check"></i> Order Queue</a>
   <a href="staff_transaction_history.php" class="nav-item"><i class="fas fa-clock-rotate-left"></i> Transaction History</a>
-    <a href="staff_products.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Products
       <?php if ($criticalStockCount > 0): ?>
         <span class="nav-badge"><?= $criticalStockCount ?></span>
       <?php endif; ?>
@@ -1207,7 +1206,7 @@ $ingredientAlertCount = $criticalIngredientCount + $lowIngredientCount;
       <?php endif; ?>
     </a>
     <a href="staff_expenses.php" class="nav-item"><i class="fas fa-wallet"></i> Expenses</a>
-    <a href="staff_reports.php" class="nav-item"><i class="fas fa-chart-bar"></i> Sales Report</a>
+    
   
     
    
@@ -1288,8 +1287,9 @@ $ingredientAlertCount = $criticalIngredientCount + $lowIngredientCount;
               <?php else: ?>
                 <?php foreach ($recentTransactions as $tx): ?>
                   <?php
-                    $statusLabel = $tx['transaction_status'] === 'completed' ? 'Completed' : 'Cancelled';
-                    $statusPillClass = $tx['transaction_status'] === 'completed' ? 'pill-success' : 'pill-red';
+                    $isCancelled = ($tx['transaction_status'] === 'cancelled' || ($tx['order_status'] ?? '') === 'cancelled');
+                    $statusLabel = $isCancelled ? 'Cancelled' : 'Completed';
+                    $statusPillClass = $isCancelled ? 'pill-red' : 'pill-success';
                     $methodLabel = $tx['payment_method'] === 'online' ? 'Online' : 'Cash';
                   ?>
                   <tr>

@@ -274,6 +274,18 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
     .stock-ok   .stock-dot { background:var(--sage); } .stock-ok   { color:var(--sage); }
     .stock-low  .stock-dot { background:#e67e22; } .stock-low  { color:#e67e22; }
     .stock-crit .stock-dot { background:var(--red-soft); } .stock-crit { color:var(--red-soft); }
+    .content-row { display:flex; gap:20px; align-items:flex-start; }
+    .content-row .table-wrap { flex:1; min-width:0; }
+    .legend-card { width:210px; flex-shrink:0; background:var(--cream); border:1.5px solid var(--cream-dark); border-radius:var(--radius-lg); box-shadow:var(--shadow-sm); padding:16px 18px; }
+    .legend-card-title { font-family:var(--font-display); font-weight:700; font-size:13px; color:var(--mocha-deep); margin-bottom:12px; }
+    .legend-item { display:flex; align-items:flex-start; gap:8px; margin-bottom:12px; }
+    .legend-item:last-child { margin-bottom:0; }
+    .legend-dot { width:9px; height:9px; border-radius:50%; margin-top:4px; flex-shrink:0; }
+    .legend-dot.ok { background:var(--sage); }
+    .legend-dot.low { background:#e67e22; }
+    .legend-dot.crit { background:var(--red-soft); }
+    .legend-label { font-size:12px; font-weight:700; color:var(--charcoal); }
+    .legend-desc { font-size:11px; color:#999; margin-top:2px; line-height:1.4; }
     .tbl-btn { padding:4px 11px; border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; border:1.5px solid; transition:all .15s; background:transparent; }
     .tbl-btn-edit { border-color:var(--gold); color:var(--gold); } .tbl-btn-edit:hover { background:var(--gold); color:#fff; }
     .tbl-btn-del  { border-color:#c9a; color:#c88; } .tbl-btn-del:hover { background:var(--red-soft); border-color:var(--red-soft); color:#fff; }
@@ -285,6 +297,7 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
     .search-box i { color:#bbb; font-size:13px; }
     .search-box input { border:none; background:transparent; font-family:var(--font-body); font-size:13px; color:var(--charcoal); outline:none; width:100%; }
     .filter-select { padding:8px 13px; border-radius:8px; border:1.5px solid var(--cream-dark); background:var(--cream); font-family:var(--font-body); font-size:13px; color:var(--charcoal); outline:none; }
+    @media (max-width: 900px) { .content-row { flex-direction:column; } .content-row .table-wrap, .legend-card { width:100%; } }
     .btn-primary { padding:9px 17px; border-radius:8px; background:var(--mocha); color:var(--cream); border:none; font-family:var(--font-body); font-size:13px; font-weight:600; cursor:pointer; transition:all .2s; display:flex; align-items:center; gap:6px; }
     .btn-primary:hover { background:var(--mocha-mid); }
 
@@ -353,7 +366,6 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
     <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
     <div class="brand-text"><div class="name">SmartStock</div><div class="sub">Bean There Café</div></div>
   </div>
-  <div class="header-center"><span class="portal-badge">Staff Panel</span><span class="header-view-label">Inventory</span></div>
   <div class="header-right">
     <div class="header-clock" id="clock"></div>
     <div class="header-user">
@@ -370,14 +382,14 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
   <a href="staff_transactions.php" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
   <a href="staff_order_queue.php" class="nav-item"><i class="fas fa-list-check"></i> Order Queue</a>
   <a href="staff_transaction_history.php" class="nav-item"><i class="fas fa-clock-rotate-left"></i> Transaction History</a>
-  <a href="staff_products.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Products</a>
+  
   <a href="staff_inventory.php" class="nav-item active"><i class="fas fa-warehouse"></i> Inventory
     <?php if ($ingredientAlertCount > 0): ?>
       <span class="nav-badge"><?= $ingredientAlertCount ?></span>
     <?php endif; ?>
   </a>
   <a href="staff_expenses.php" class="nav-item"><i class="fas fa-wallet"></i> Expenses</a>
-  <a href="staff_reports.php" class="nav-item"><i class="fas fa-chart-bar"></i> Sales Report</a>
+  
   <hr class="sidebar-divider"/>
   <div class="sidebar-footer">
     <p>SmartStock v1.0<br />Bean There Café<br />ISO/IEC 25010 Compliant</p>
@@ -407,13 +419,21 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
         <i class="fas fa-magnifying-glass"></i>
         <input type="text" id="ing-search" placeholder="Search ingredients…" oninput="filterIngredients()"/>
       </div>
-      <select class="filter-select" id="ing-stock-filter" onchange="filterIngredients()"><option value="">All Stock Levels</option><option value="ok">OK</option><option value="low">Low</option><option value="crit">Critical</option></select>
+      <select class="filter-select" id="ing-stock-filter" onchange="filterIngredients()"><option value="">All Stock Levels</option><option value="ok">In Stock</option><option value="low">Low Stock</option><option value="crit">Critical Stock</option></select>
     </div>
-    <div class="table-wrap">
-      <table class="data-table">
-        <thead><tr><th>Code</th><th>Ingredient</th><th>Stock</th><th>Unit</th><th>Supplier</th><th>Contact</th><th>Last Restock / Delivery</th><th>Last Updated</th><th>Status</th><th>Actions</th></tr></thead>
-        <tbody id="ing-tbody"></tbody>
-      </table>
+    <div class="content-row">
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Code</th><th>Ingredient</th><th>Stock</th><th>Unit</th><th>Supplier</th><th>Contact</th><th>Last Restock / Delivery</th><th>Last Updated</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody id="ing-tbody"></tbody>
+        </table>
+      </div>
+      <div class="legend-card">
+        <div class="legend-card-title">Legend</div>
+        <div class="legend-item"><span class="legend-dot ok"></span><div><div class="legend-label">In Stock</div><div class="legend-desc">Stock level is sufficient</div></div></div>
+        <div class="legend-item"><span class="legend-dot low"></span><div><div class="legend-label">Low Stock</div><div class="legend-desc">Consider restocking soon</div></div></div>
+        <div class="legend-item"><span class="legend-dot crit"></span><div><div class="legend-label">Critical Stock</div><div class="legend-desc">Restock immediately</div></div></div>
+      </div>
     </div>
   </div>
 </div>
@@ -558,7 +578,7 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
     return Number(n).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 });
   }
 
-  const levelLabels = { ok: 'OK', low: 'Low', crit: 'Critical' };
+  const levelLabels = { ok: 'In Stock', low: 'Low Stock', crit: 'Critical Stock' };
 
   function renderIngredients(search, level) {
     const tbody = document.getElementById('ing-tbody');
@@ -647,7 +667,7 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
     document.getElementById('pr-date').textContent = new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
     document.getElementById('pr-count').textContent = sorted.length;
     document.getElementById('pr-summary').textContent =
-      `Summary: ${sorted.length} ingredient(s) — ${counts.ok} OK · ${counts.low} Low · ${counts.crit} Critical`;
+      `Summary: ${sorted.length} ingredient(s) — ${counts.ok} In Stock · ${counts.low} Low Stock · ${counts.crit} Critical Stock`;
 
     window.print();
   }

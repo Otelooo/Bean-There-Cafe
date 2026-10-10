@@ -64,7 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'remov
 
     // Soft-remove: flag the order so it leaves the queue, but keep the record so Transaction
     // History and Sales Report data are not deleted.
-    $stmt = $conn->prepare("UPDATE transactions SET removed_from_queue = 1 WHERE transaction_id = ? AND transaction_status = 'completed' AND removed_from_queue = 0");
+    $stmt = $conn->prepare("UPDATE transactions SET removed_from_queue = 1 WHERE transaction_id = ? AND removed_from_queue = 0");
     $stmt->bind_param('i', $transactionId);
     $stmt->execute();
 
@@ -94,7 +94,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'remov
 
     // Soft-remove: flag the orders so they leave the queue, but keep the records so Transaction
     // History and Sales Report data are not deleted.
-    $stmt = $conn->prepare("UPDATE transactions SET removed_from_queue = 1 WHERE transaction_id IN ($placeholders) AND transaction_status = 'completed' AND removed_from_queue = 0");
+    $stmt = $conn->prepare("UPDATE transactions SET removed_from_queue = 1 WHERE transaction_id IN ($placeholders) AND removed_from_queue = 0");
     $stmt->bind_param($types, ...$ids);
     $stmt->execute();
     $removed = $stmt->affected_rows;
@@ -104,7 +104,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'remov
     exit;
 }
 
-// Fetch queued orders (completed transactions not yet removed from the queue) with their items
+// Fetch queued orders (transactions not yet removed from the queue) with their items
 $orders = [];
 $orderStmt = $conn->query("
     SELECT t.transaction_id, t.transaction_date, t.transaction_total, t.transaction_status,
@@ -112,7 +112,7 @@ $orderStmt = $conn->query("
            COALESCE(t.cashier_username, u.username, 'Deleted user') AS cashier_name
     FROM transactions t
     LEFT JOIN users u ON u.user_id = t.user_id
-    WHERE t.transaction_status = 'completed' AND t.removed_from_queue = 0
+    WHERE t.removed_from_queue = 0
     ORDER BY t.transaction_date DESC
 ");
 while ($row = $orderStmt->fetch_assoc()) {
@@ -382,14 +382,13 @@ $initials = strtoupper(substr($displayName, 0, 2));
   <a href="staff_transactions.php" class="nav-item"><i class="fas fa-receipt"></i> Transactions</a>
   <a href="staff_order_queue.php" class="nav-item active"><i class="fas fa-list-check"></i> Order Queue</a>
   <a href="staff_transaction_history.php" class="nav-item"><i class="fas fa-clock-rotate-left"></i> Transaction History</a>
-  <a href="staff_products.php" class="nav-item"><i class="fas fa-boxes-stacked"></i> Products</a>
   <a href="staff_inventory.php" class="nav-item"><i class="fas fa-warehouse"></i> Inventory
     <?php if ($ingredientAlertCount > 0): ?>
       <span class="nav-badge"><?= $ingredientAlertCount ?></span>
     <?php endif; ?>
   </a>
   <a href="staff_expenses.php" class="nav-item"><i class="fas fa-wallet"></i> Expenses</a>
-  <a href="staff_reports.php" class="nav-item"><i class="fas fa-chart-bar"></i> Sales Report</a>
+  
   <hr class="sidebar-divider" />
   <div class="sidebar-footer">
     <p>SmartStock v1.0<br />Bean There Café<br />ISO/IEC 25010 Compliant</p>

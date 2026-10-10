@@ -3,6 +3,7 @@ session_start();
 require_once __DIR__ . '/../db_connect.php';
 require_once __DIR__ . '/../settings_helper.php';
 require_once __DIR__ . '/../unit_helper.php';
+require_once __DIR__ . '/../transaction_helper.php';
 
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'cafe owner') {
     header('Location: ../signin.php');
@@ -18,6 +19,16 @@ $navStmt->bind_param('d', $navLowStockThreshold);
 $navStmt->execute();
 $ingredientAlertCount = (int)$navStmt->get_result()->fetch_assoc()['cnt'];
 $navStmt->close();
+
+// Ensure table_number column supports combined table numbers (e.g. "1, 2")
+$tblColCheck = $conn->query("SHOW COLUMNS FROM transactions LIKE 'table_number'");
+if ($tblColCheck && $row = $tblColCheck->fetch_assoc()) {
+    if (stripos($row['Type'], 'int') !== false) {
+        $conn->query("ALTER TABLE transactions MODIFY table_number VARCHAR(50) DEFAULT NULL");
+    }
+}
+if ($tblColCheck) $tblColCheck->close();
+ensure_transaction_item_discount_tracking($conn);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'checkout') {
     header('Content-Type: application/json');
@@ -48,7 +59,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         $variantRaw = $line['variant_id'] ?? null;
         $variantId = ($variantRaw !== null && $variantRaw !== '') ? (int)$variantRaw : null;
         $sugarLevel = trim((string)($line['sugar_level'] ?? ''));
-        $cartLines[] = ['product_id' => $pid, 'qty' => $qty, 'flavor_ingredient_id' => $flavorId, 'variant_id' => $variantId, 'sugar_level' => $sugarLevel !== '' ? $sugarLevel : null];
+        $discountApplied = !empty($line['discount_applied']);
+        $cartLines[] = [
+            'product_id' => $pid,
+            'qty' => $qty,
+            'flavor_ingredient_id' => $flavorId,
+            'variant_id' => $variantId,
+            'sugar_level' => $sugarLevel !== '' ? $sugarLevel : null,
+            'discount_applied' => $discountApplied,
+        ];
         $totalQtyByProduct[$pid] = ($totalQtyByProduct[$pid] ?? 0) + $qty;
     }
 
@@ -146,6 +165,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
 
         $ingredientNeeds = [];
         $grossTotal = 0.0;
+        $discountableTotal = 0.0;
         $lineItems = [];
         foreach ($cartLines as $line) {
             $pid = $line['product_id'];
@@ -166,6 +186,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
             }
             $subtotal = $unitPrice * $qty;
             $grossTotal += $subtotal;
+            if (!empty($line['discount_applied'])) {
+                $discountableTotal += $subtotal;
+            }
 
             $chosenIngredientName = null;
             $hasChoiceGroup = false;
@@ -207,6 +230,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
                 'quantity' => $qty,
                 'unit_price' => $unitPrice,
                 'subtotal' => $subtotal,
+                'discount_applied' => $discountRate > 0 && $line['discount_applied'],
                 'chosen_ingredient_name' => $chosenIngredientName,
                 'chosen_variant_name' => $chosenVariantName,
                 'chosen_sugar_level' => $chosenSugarLevel,
@@ -236,7 +260,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
             }
         }
 
-        $discountAmount = round($grossTotal * $discountRate, 2);
+        // If specific items have discount_applied, calculate discount only on those items.
+        // If discount is flagged but no specific line had the flag (fallback), use grossTotal.
+        $baseForDiscount = ($discountRate > 0 && $discountableTotal > 0) ? $discountableTotal : ($discountRate > 0 ? $grossTotal : 0.0);
+        $discountAmount = round($baseForDiscount * $discountRate, 2);
         $finalTotal = round($grossTotal - $discountAmount, 2);
 
         // Payment figures are calculated again on the server.  This keeps the stored
@@ -266,11 +293,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         }
         $tableNumberRaw = trim($_POST['table_number'] ?? '');
         $tableNumber = null;
-        if ($tableNumberRaw !== '') {
-            if (filter_var($tableNumberRaw, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 999]]) === false) {
-                throw new RuntimeException('Table number must be between 1 and 999.');
+        if ($orderType === 'dine_in' && $tableNumberRaw !== '') {
+            $tblParts = array_map('trim', explode(',', $tableNumberRaw));
+            $validParts = [];
+            foreach ($tblParts as $part) {
+                if ($part === '') continue;
+                if (!ctype_digit($part) || (int)$part < 1 || (int)$part > 15) {
+                    throw new RuntimeException('Invalid table number selected.');
+                }
+                $validParts[] = (int)$part;
             }
-            $tableNumber = (int)$tableNumberRaw;
+            if ($validParts) {
+                sort($validParts);
+                $tableNumber = implode(', ', array_unique($validParts));
+            }
         }
         $notes = trim($_POST['notes'] ?? '');
         $notes = $notes !== '' ? $notes : null;
@@ -278,19 +314,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         // stock precisely even if the recipe (product_ingredient_items) has changed since this sale.
         $ingredientUsageSnapshot = json_encode($ingredientNeeds);
         $insertTxn = $conn->prepare("INSERT INTO transactions (user_id, cashier_username, transaction_date, transaction_total, transaction_status, payment_method, discount, amount_tendered, amount_change, order_type, table_number, notes, ingredient_usage_snapshot) VALUES (?, ?, NOW(), ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?)");
-        $insertTxn->bind_param('isdsdddsiss', $userId, $cashierUsername, $finalTotal, $paymentMethod, $discountAmount, $amountTendered, $amountChange, $orderType, $tableNumber, $notes, $ingredientUsageSnapshot);
+        $insertTxn->bind_param('isdsdddssss', $userId, $cashierUsername, $finalTotal, $paymentMethod, $discountAmount, $amountTendered, $amountChange, $orderType, $tableNumber, $notes, $ingredientUsageSnapshot);
         $insertTxn->execute();
         $transactionId = $insertTxn->insert_id;
         $insertTxn->close();
 
         // product_name_snapshot / chosen_ingredient_name_snapshot / variant_name_snapshot preserve
         // what was actually sold even if the product, ingredient, or size/option is deleted later.
-        $insertItem = $conn->prepare('INSERT INTO transaction_items (transaction_id, product_id, product_name_snapshot, chosen_ingredient_name_snapshot, variant_name_snapshot, sugar_level_snapshot, quantity, unit_price, subtotal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        $insertItem = $conn->prepare('INSERT INTO transaction_items (transaction_id, product_id, product_name_snapshot, chosen_ingredient_name_snapshot, variant_name_snapshot, sugar_level_snapshot, quantity, unit_price, subtotal, discount_applied) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
         // Only "prepared" products track their own stock; made-to-order items have no product_stocks
         // to decrement (their ingredient stock is decremented below instead).
         $updateStock = $conn->prepare("UPDATE products SET product_stocks = product_stocks - ? WHERE product_id = ? AND product_type = 'prepared'");
         foreach ($lineItems as $item) {
-            $insertItem->bind_param('iissssidd', $transactionId, $item['product_id'], $item['product_name'], $item['chosen_ingredient_name'], $item['chosen_variant_name'], $item['chosen_sugar_level'], $item['quantity'], $item['unit_price'], $item['subtotal']);
+            $insertItem->bind_param('iissssiddi', $transactionId, $item['product_id'], $item['product_name'], $item['chosen_ingredient_name'], $item['chosen_variant_name'], $item['chosen_sugar_level'], $item['quantity'], $item['unit_price'], $item['subtotal'], $item['discount_applied']);
             $insertItem->execute();
 
             $updateStock->bind_param('ii', $item['quantity'], $item['product_id']);
@@ -347,7 +383,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'cance
             throw new RuntimeException('Transaction not found or already cancelled.');
         }
 
-        $update = $conn->prepare("UPDATE transactions SET transaction_status = 'cancelled' WHERE transaction_id = ? AND transaction_status = 'completed'");
+        $update = $conn->prepare("UPDATE transactions SET transaction_status = 'cancelled', order_status = 'cancelled', removed_from_queue = 1 WHERE transaction_id = ? AND transaction_status = 'completed'");
         $update->bind_param('i', $transactionId);
         $update->execute();
         if ($update->affected_rows === 0) {
@@ -1464,6 +1500,88 @@ while ($row = $prodResult->fetch_assoc()) {
       font-size: 16px;
     }
 
+    .discount-items-box {
+      margin-top: 12px;
+      background: var(--cream);
+      border: 1.5px solid var(--cream-dark);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+    }
+
+    .discount-item-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: #fff;
+      border: 1px solid var(--cream-dark);
+      cursor: pointer;
+      transition: all .15s ease;
+      margin-bottom: 6px;
+    }
+
+    .discount-item-row:last-child {
+      margin-bottom: 0;
+    }
+
+    .discount-item-row:hover {
+      border-color: var(--gold);
+    }
+
+    .discount-item-checkbox {
+      width: 17px;
+      height: 17px;
+      accent-color: var(--gold);
+      cursor: pointer;
+    }
+
+    /* ── TABLE NUMBER SELECTOR ── */
+    #table-number-section.disabled {
+      opacity: 0.45;
+      pointer-events: none;
+      filter: grayscale(0.6);
+    }
+
+    .table-options-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .table-option-pill {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 9px 4px;
+      background: var(--cream-light);
+      border: 1.5px solid var(--cream-dark);
+      border-radius: 8px;
+      font-family: var(--font-body);
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--charcoal-mid);
+      cursor: pointer;
+      user-select: none;
+      transition: all .15s ease;
+      text-align: center;
+    }
+
+    .table-option-pill:hover {
+      border-color: var(--gold);
+      color: var(--mocha-deep);
+      background: #fff;
+    }
+
+    .table-option-pill.active {
+      background: var(--mocha-deep);
+      border-color: var(--gold);
+      color: var(--gold-light);
+      box-shadow: 0 2px 8px rgba(46, 26, 24, .25);
+      font-weight: 700;
+    }
+
     .payment-options {
       margin: 20px 0;
     }
@@ -1827,14 +1945,26 @@ while ($row = $prodResult->fetch_assoc()) {
             <h4
               style="font-family: var(--font-display); font-size: 16px; color: var(--mocha-deep); margin-bottom: 12px; display:flex; align-items:center; gap:8px;">
               <i class="fas fa-tags" style="color:var(--gold);"></i>Discounts</h4>
-            <label class="discount-option">
-              <input type="checkbox" class="discount-checkbox" id="pwd-discount">
-              <span>Person with Disability (20%)</span>
-            </label>
-            <label class="discount-option">
-              <input type="checkbox" class="discount-checkbox" id="senior-discount">
-              <span>Senior Citizen (20%)</span>
-            </label>
+            <div style="display:flex; gap:14px; flex-wrap:wrap; margin-bottom:4px;">
+              <label class="discount-option" style="margin-bottom:0;">
+                <input type="checkbox" class="discount-checkbox" id="pwd-discount">
+                <span>Person with Disability (20%)</span>
+              </label>
+              <label class="discount-option" style="margin-bottom:0;">
+                <input type="checkbox" class="discount-checkbox" id="senior-discount">
+                <span>Senior Citizen (20%)</span>
+              </label>
+            </div>
+            <div id="discount-items-container" class="discount-items-box" style="display:none;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                <span style="font-size:12.5px; font-weight:700; color:var(--mocha-deep);"><i class="fas fa-check-double" style="color:var(--gold); margin-right:5px;"></i>Apply 20% Discount To:</span>
+                <div style="display:flex; gap:10px;">
+                  <button type="button" onclick="selectAllDiscountItems(true)" style="background:none; border:none; color:var(--gold); font-size:11.5px; font-weight:600; cursor:pointer; text-decoration:underline;">All</button>
+                  <button type="button" onclick="selectAllDiscountItems(false)" style="background:none; border:none; color:#888; font-size:11.5px; font-weight:600; cursor:pointer; text-decoration:underline;">None</button>
+                </div>
+              </div>
+              <div id="discount-items-list" style="display:flex; flex-direction:column; gap:4px; max-height:160px; overflow-y:auto;"></div>
+            </div>
           </div>
           <div class="payment-options">
             <h4
@@ -1863,9 +1993,21 @@ while ($row = $prodResult->fetch_assoc()) {
               <option value="takeout">Takeout</option>
             </select>
           </div>
-          <div class="notes-section">
-            <h4 style="font-family: var(--font-display); font-size: 16px; color: var(--mocha-deep); margin-bottom: 12px; display:flex; align-items:center; gap:8px;"><i class="fas fa-chair" style="color:var(--gold);"></i>Table Number <span style="font-size:12px;color:#aaa;font-weight:400;">(optional)</span></h4>
-            <input type="number" id="checkout-table-number" min="1" max="999" step="1" placeholder="e.g. 12" style="width:100%;padding:10px 13px;border-radius:8px;border:1.5px solid var(--cream-dark);background:var(--cream-light);font-family:var(--font-body);font-size:13px;color:var(--charcoal);outline:none;">
+          <div class="notes-section" id="table-number-section">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <h4 style="font-family: var(--font-display); font-size: 16px; color: var(--mocha-deep); margin-bottom: 0; display:flex; align-items:center; gap:8px;">
+                <i class="fas fa-chair" style="color:var(--gold);"></i>Table Number
+                <span id="table-select-hint" style="font-size:12px;color:#888;font-weight:400;">(optional — combine tables if needed)</span>
+              </h4>
+              <button type="button" id="clear-tables-btn" onclick="clearSelectedTables()" style="background:none; border:none; color:var(--red-soft); font-size:11.5px; font-weight:600; cursor:pointer; display:none;">Clear</button>
+            </div>
+            <div class="table-options-grid" id="table-options-grid">
+              <?php for ($tNum = 1; $tNum <= 15; $tNum++): ?>
+                <div class="table-option-pill" data-table="<?= $tNum ?>" onclick="toggleTableNumber(<?= $tNum ?>)">
+                  Table <?= $tNum ?>
+                </div>
+              <?php endfor; ?>
+            </div>
           </div>
           <div class="notes-section">
             <h4
@@ -1955,9 +2097,18 @@ while ($row = $prodResult->fetch_assoc()) {
           document.querySelectorAll('.discount-checkbox').forEach(cb => cb.addEventListener('change', () => {
             if (cb.checked) {
               document.querySelectorAll('.discount-checkbox').forEach(other => { if (other !== cb) other.checked = false; });
+              // When newly selecting a discount, default all cart items to discounted
+              cart.forEach(item => { item.discount_applied = true; });
             }
+            renderDiscountItemsList();
             updateCheckoutTotals();
           }));
+
+          const orderTypeSelect = document.getElementById('checkout-order-type');
+          if (orderTypeSelect) {
+            orderTypeSelect.addEventListener('change', updateTableNumberState);
+          }
+
           document.querySelectorAll('.payment-option').forEach(opt => opt.addEventListener('click', e => selectPayment(e.currentTarget.dataset.payment, e.currentTarget)));
           amountInput.addEventListener('input', () => { amountManuallyEdited = true; updateChangePreview(); });
         });
@@ -2207,12 +2358,116 @@ while ($row = $prodResult->fetch_assoc()) {
           cartBadge.textContent = count;
           cartBadge.style.display = count > 0 ? 'inline-block' : 'none';
         }
+        let selectedTables = new Set();
+
+        function updateTableNumberState() {
+          const orderType = document.getElementById('checkout-order-type').value;
+          const tableSection = document.getElementById('table-number-section');
+          const hint = document.getElementById('table-select-hint');
+          const clearBtn = document.getElementById('clear-tables-btn');
+          if (orderType === 'takeout') {
+            tableSection.classList.add('disabled');
+            selectedTables.clear();
+            renderSelectedTablesUi();
+            if (hint) hint.textContent = '(not applicable for takeout)';
+            if (clearBtn) clearBtn.style.display = 'none';
+          } else {
+            tableSection.classList.remove('disabled');
+            if (hint) hint.textContent = '(optional — combine tables if needed)';
+            if (clearBtn) clearBtn.style.display = selectedTables.size > 0 ? 'inline' : 'none';
+          }
+        }
+
+        function toggleTableNumber(num) {
+          const orderType = document.getElementById('checkout-order-type').value;
+          if (orderType === 'takeout') return;
+          if (selectedTables.has(num)) {
+            selectedTables.delete(num);
+          } else {
+            selectedTables.add(num);
+          }
+          renderSelectedTablesUi();
+        }
+
+        function clearSelectedTables() {
+          selectedTables.clear();
+          renderSelectedTablesUi();
+        }
+
+        function renderSelectedTablesUi() {
+          document.querySelectorAll('.table-option-pill').forEach(pill => {
+            const tableNum = parseInt(pill.dataset.table);
+            if (selectedTables.has(tableNum)) {
+              pill.classList.add('active');
+            } else {
+              pill.classList.remove('active');
+            }
+          });
+          const clearBtn = document.getElementById('clear-tables-btn');
+          const orderType = document.getElementById('checkout-order-type').value;
+          if (clearBtn) {
+            clearBtn.style.display = (orderType !== 'takeout' && selectedTables.size > 0) ? 'inline' : 'none';
+          }
+        }
+
+        function getSelectedTablesString() {
+          const orderType = document.getElementById('checkout-order-type').value;
+          if (orderType === 'takeout' || selectedTables.size === 0) return '';
+          return Array.from(selectedTables).sort((a, b) => a - b).join(', ');
+        }
+
+        function renderDiscountItemsList() {
+          const hasDiscount = document.getElementById('pwd-discount').checked || document.getElementById('senior-discount').checked;
+          const container = document.getElementById('discount-items-container');
+          const list = document.getElementById('discount-items-list');
+          if (!container || !list) return;
+
+          if (!hasDiscount) {
+            container.style.display = 'none';
+            return;
+          }
+
+          container.style.display = 'block';
+          list.innerHTML = cart.map((item, idx) => {
+            const isChecked = item.discount_applied !== false; // default true when discount is chosen
+            const lineTotal = item.price * item.qty;
+            return `
+              <label class="discount-item-row" style="display:flex; align-items:center; justify-content:space-between; padding:6px 8px; border-radius:6px; background:#fff; border:1px solid var(--cream-dark); cursor:pointer; font-size:12.5px;">
+                <span style="display:flex; align-items:center; gap:8px;">
+                  <input type="checkbox" class="discount-item-checkbox" data-index="${idx}" ${isChecked ? 'checked' : ''} onchange="toggleDiscountItem(${idx}, this.checked)">
+                  <span style="color:var(--mocha-deep); font-weight:600;">${itemLabel(item)} <span style="font-size:11px; color:#888;">× ${item.qty}</span></span>
+                </span>
+                <span style="font-family:var(--font-mono); font-weight:700; color:var(--gold);">₱${lineTotal.toLocaleString()}</span>
+              </label>
+            `;
+          }).join('');
+        }
+
+        function toggleDiscountItem(idx, checked) {
+          if (cart[idx]) {
+            cart[idx].discount_applied = checked;
+            updateCheckoutTotals();
+          }
+        }
+
+        function selectAllDiscountItems(selectAll) {
+          cart.forEach(item => { item.discount_applied = selectAll; });
+          renderDiscountItemsList();
+          updateCheckoutTotals();
+        }
+
         function showCheckoutModal() {
           if (cart.length === 0) return;
           closeCartPanel();
           amountManuallyEdited = false;
+          // By default, if a discount is enabled or when opening, initialize discount_applied
+          cart.forEach(item => {
+            if (typeof item.discount_applied === 'undefined') item.discount_applied = true;
+          });
           checkoutModal.classList.add('show');
           renderOrderSummary();
+          updateTableNumberState();
+          renderDiscountItemsList();
           updateCheckoutTotals();
         }
         function closeCheckoutModal() {
@@ -2221,8 +2476,14 @@ while ($row = $prodResult->fetch_assoc()) {
         function computeFinalPayable() {
           const totalOriginal = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
           const hasDiscount = document.getElementById('pwd-discount').checked || document.getElementById('senior-discount').checked;
-          const discountAmount = hasDiscount ? totalOriginal * DISCOUNT_RATE : 0;
-          return totalOriginal - discountAmount;
+          let discountAmount = 0;
+          if (hasDiscount) {
+            const discountableTotal = cart
+              .filter(i => i.discount_applied !== false)
+              .reduce((sum, i) => sum + (i.price * i.qty), 0);
+            discountAmount = discountableTotal * DISCOUNT_RATE;
+          }
+          return Math.max(0, totalOriginal - discountAmount);
         }
         function updateChangePreview() {
           const finalPayable = computeFinalPayable();
@@ -2258,36 +2519,31 @@ while ($row = $prodResult->fetch_assoc()) {
         function updateCheckoutTotals() {
           const totalOriginal = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
 
-          // Calculate discount if applicable
+          // Calculate discount if applicable based on individually selected items
           const hasDiscount = document.getElementById('pwd-discount').checked || document.getElementById('senior-discount').checked;
-          const discountAmount = hasDiscount ? totalOriginal * DISCOUNT_RATE : 0;
+          let discountAmount = 0;
+          let discountedCount = 0;
+          if (hasDiscount) {
+            const discountedItems = cart.filter(i => i.discount_applied !== false);
+            discountedCount = discountedItems.length;
+            const discountableTotal = discountedItems.reduce((sum, i) => sum + (i.price * i.qty), 0);
+            discountAmount = discountableTotal * DISCOUNT_RATE;
+          }
 
-          const finalPayable = totalOriginal - discountAmount;
-
-          // Calculate VAT breakdown of the final amount
-          const netAmount = finalPayable / (1 + TAX_RATE);
-          const vatAmount = finalPayable - netAmount;
+          const finalPayable = Math.max(0, totalOriginal - discountAmount);
 
           document.getElementById('totals-breakdown').innerHTML = `
     <div class="cart-total-row">
-      <span class="total-label">Gross Amount</span>
-      <span>₱${totalOriginal.toLocaleString()}</span>
+      <span class="total-label">Subtotal</span>
+      <span>₱${totalOriginal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
     </div>
     ${discountAmount > 0 ? `<div class="cart-total-row">
-      <span class="total-label" style="color: var(--sage);">Discount (20%)</span>
-      <span style="color: var(--sage);">−₱${discountAmount.toLocaleString()}</span>
+      <span class="total-label" style="color: var(--sage);">Discount (20% on ${discountedCount} item${discountedCount === 1 ? '' : 's'})</span>
+      <span style="color: var(--sage);">−₱${discountAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
     </div>` : ''}
-    <div class="cart-total-row">
-      <span class="total-label">Net of VAT</span>
-      <span>₱${netAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-    </div>
-    <div class="cart-total-row">
-      <span class="total-label">VAT (12%)</span>
-      <span>₱${vatAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-    </div>
     <div class="cart-total-row discount-total-row">
       <span class="grand-total">Total to Pay</span>
-      <span style="font-family: var(--font-mono); font-size: 24px; font-weight: 800; color: var(--gold);">₱${finalPayable.toLocaleString()}</span>
+      <span style="font-family: var(--font-mono); font-size: 24px; font-weight: 800; color: var(--gold);">₱${finalPayable.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
     </div>
   `;
           if (currentPaymentMethod === 'ewallet') {
@@ -2311,26 +2567,36 @@ while ($row = $prodResult->fetch_assoc()) {
         function buildReceiptHtml(transactionId) {
           const totalOriginal = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
           const hasDiscount = document.getElementById('pwd-discount').checked || document.getElementById('senior-discount').checked;
-          const discountVal = hasDiscount ? totalOriginal * DISCOUNT_RATE : 0;
-          const finalPayable = totalOriginal - discountVal;
+          const discountReason = document.getElementById('pwd-discount').checked ? 'PWD (20%)' : 'Senior (20%)';
+          let discountVal = 0;
+          if (hasDiscount) {
+            const discountableTotal = cart
+              .filter(i => i.discount_applied !== false)
+              .reduce((sum, i) => sum + (i.price * i.qty), 0);
+            discountVal = discountableTotal * DISCOUNT_RATE;
+          }
+          const finalPayable = Math.max(0, totalOriginal - discountVal);
           const paymentMethod = document.querySelector('.payment-option.active').dataset.payment;
           const paymentLabel = paymentMethod === 'ewallet' ? 'ONLINE' : 'CASH';
           const amountTendered = parseFloat(amountInput.value);
           const change = amountTendered - finalPayable;
           const orderType = document.getElementById('checkout-order-type').value;
           const orderTypeLabel = orderType === 'takeout' ? 'TAKEOUT' : 'DINE-IN';
+          const tableStr = getSelectedTablesString();
           const notesText = document.getElementById('checkout-notes-input').value.trim();
 
           const foodItems = cart.filter(i => i.category_group !== 'drink');
           const drinkItems = cart.filter(i => i.category_group === 'drink');
           const renderReceiptSection = (title, items) => items.length ? `
     <div style="font-weight: 800; font-size: 13px; letter-spacing: 1px; margin: 8px 0 4px;">${title}</div>
-    ${items.map(i => `
-    <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-      <span>${itemLabel(i)} x${i.qty}</span>
-      <span>₱${(i.price * i.qty).toLocaleString()}</span>
-    </div>
-    `).join('')}
+    ${items.map(i => {
+      const isItemDiscounted = hasDiscount && i.discount_applied !== false;
+      return `
+      <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+        <span>${itemLabel(i)} x${i.qty}${isItemDiscounted ? ' <span style="font-size:11px;color:var(--sage);font-weight:600;">[20% OFF]</span>' : ''}</span>
+        <span>₱${(i.price * i.qty).toLocaleString()}</span>
+      </div>`;
+    }).join('')}
   ` : '';
           const itemsHtml = renderReceiptSection('FOOD', foodItems) + renderReceiptSection('DRINKS', drinkItems);
 
@@ -2341,43 +2607,42 @@ while ($row = $prodResult->fetch_assoc()) {
     </div>
     <div style="display: flex; justify-content: space-between;">
       <span>Subtotal:</span>
-      <span>₱${totalOriginal.toLocaleString()}</span>
+      <span>₱${totalOriginal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
     </div>
-    ${hasDiscount ? `
+    ${discountVal > 0 ? `
     <div style="display: flex; justify-content: space-between; color: var(--red-soft);">
-      <span>Discount (20%):</span>
-      <span>-₱${discountVal.toLocaleString()}</span>
+      <span>Discount (${discountReason}):</span>
+      <span>-₱${discountVal.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
     </div>` : ''}
     <div style="display: flex; justify-content: space-between; font-weight: 800; font-size: 18px; margin: 10px 0; color: var(--mocha-deep);">
       <span>TOTAL:</span>
-      <span>₱${finalPayable.toLocaleString()}</span>
+      <span>₱${finalPayable.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
     </div>
     <div style="display: flex; justify-content: space-between; font-size: 13px; color: var(--charcoal-mid);">
       <span>Paid (${paymentLabel}):</span>
-      <span>₱${amountTendered.toLocaleString()}</span>
+      <span>₱${amountTendered.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
     </div>
     <div style="display: flex; justify-content: space-between; font-size: 13px; color: var(--charcoal-mid);">
       <span>Order Type:</span>
       <span>${orderTypeLabel}</span>
     </div>
+    ${(orderType === 'dine_in' && tableStr) ? `
+    <div style="display: flex; justify-content: space-between; font-size: 13px; color: var(--charcoal-mid);">
+      <span>Table:</span>
+      <span>${tableStr.includes(',') ? 'Tables ' : 'Table '}${tableStr}</span>
+    </div>` : ''}
     <div style="display: flex; justify-content: space-between; font-weight: 700; color: var(--sage); margin-bottom: 10px;">
       <span>CHANGE:</span>
-      <span>₱${change.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+      <span>₱${change.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
     </div>
     ${notesText ? `<div style="margin-top:8px;padding-top:10px;border-top:1px dashed var(--cream-dark);font-size:12px;color:var(--charcoal-mid);"><strong>Note:</strong> ${escapeHtml(notesText)}</div>` : ''}
-    <div style="font-size: 11px; color: #999; text-align: center; margin-top: 15px;">
-      VAT Included (12%): ₱${(finalPayable - (finalPayable / 1.12)).toLocaleString(undefined, { minimumFractionDigits: 2 })}
-    </div>
   `;
         }
 
         // Shows a preview of the receipt before anything is saved — no server call here, so
         // "Back" can safely return to the checkout modal with nothing to undo.
         function showReceiptPreview() {
-          const totalOriginal = cart.reduce((sum, i) => sum + (i.price * i.qty), 0);
-          const hasDiscount = document.getElementById('pwd-discount').checked || document.getElementById('senior-discount').checked;
-          const discountVal = hasDiscount ? totalOriginal * DISCOUNT_RATE : 0;
-          const finalPayable = totalOriginal - discountVal;
+          const finalPayable = computeFinalPayable();
           const amountTendered = parseFloat(amountInput.value);
 
           if (isNaN(amountTendered) || amountTendered < finalPayable) {
@@ -2422,12 +2687,19 @@ while ($row = $prodResult->fetch_assoc()) {
               headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
               body: new URLSearchParams({
                 action: 'checkout',
-                cart: JSON.stringify(cart.map(i => ({ id: i.id, qty: i.qty, flavor_ingredient_id: i.flavor_ingredient_id || null, variant_id: i.variant_id || null, sugar_level: i.sugar_level || null }))),
+                cart: JSON.stringify(cart.map(i => ({
+                  id: i.id,
+                  qty: i.qty,
+                  flavor_ingredient_id: i.flavor_ingredient_id || null,
+                  variant_id: i.variant_id || null,
+                  sugar_level: i.sugar_level || null,
+                  discount_applied: i.discount_applied !== false
+                }))),
                 payment_method: paymentMethod,
                 discount: hasDiscount ? '1' : '',
                 amount_tendered: amountInput.value,
                 order_type: document.getElementById('checkout-order-type').value,
-                table_number: document.getElementById('checkout-table-number').value,
+                table_number: getSelectedTablesString(),
                 notes: document.getElementById('checkout-notes-input').value.trim()
               })
             });
