@@ -1,6 +1,7 @@
 <?php
 session_start();
 require_once __DIR__ . '/../db_connect.php';
+require_once __DIR__ . '/../settings_helper.php';
 
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'cafe owner') {
     header('Location: ../signin.php');
@@ -71,6 +72,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     exit;
 }
 
+$settings = get_system_settings($conn);
+$criticalStockThreshold = (float)$settings['critical_stock_threshold'];
+$lowStockThreshold = (float)$settings['low_stock_threshold'];
+$stmt = $conn->prepare("
+    SELECT COUNT(*) AS cnt
+    FROM product_ingredients
+    WHERE (ingredient_stock_reference IS NULL OR ingredient_stock_reference <= 0)
+          AND ingredient_stock <= 0
+       OR ingredient_stock_reference > 0
+          AND (
+              (ingredient_stock / ingredient_stock_reference) * 100 <= ?
+              OR (ingredient_stock / ingredient_stock_reference) * 100 > ?
+                 AND (ingredient_stock / ingredient_stock_reference) * 100 <= ?
+          )
+");
+$stmt->bind_param('ddd', $criticalStockThreshold, $criticalStockThreshold, $lowStockThreshold);
+$stmt->execute();
+$ingredientAlertCount = (int)$stmt->get_result()->fetch_assoc()['cnt'];
+$stmt->close();
+
 $expenses = [];
 $result = $conn->query('SELECT expense_id, expense_name, expense_price, expense_time, expense_category, inserted_by FROM expenses ORDER BY expense_time DESC, expense_id DESC');
 while ($row = $result->fetch_assoc()) {
@@ -126,6 +147,7 @@ function expense_datetime_value(string $value): string
     .nav-item:hover { background:rgba(255,255,255,.06); color:var(--cream); }
     .nav-item.active { background:rgba(201,148,58,.12); color:var(--gold-light); border-left-color:var(--gold); }
     .nav-item.active i { color:var(--gold); }
+    .nav-badge { margin-left:auto; background:var(--red); color:#fff; font-size:10px; font-weight:700; padding:1px 7px; border-radius:99px; }
     .divider { border-top:1px solid rgba(255,255,255,.07); margin:8px 16px; }
     .sidebar-footer { margin-top:auto; padding:16px 20px; border-top:1px solid rgba(255,255,255,.07); text-align:center; }
     .sidebar-footer p { margin:0; font-size:10px; color:rgba(245,236,215,.22); line-height:1.7; }
@@ -172,9 +194,9 @@ function expense_datetime_value(string $value): string
     <a class="nav-item" href="dashboard.php"><i class="fas fa-chart-line"></i> Dashboard</a>
     <a class="nav-item" href="transactions.php"><i class="fas fa-receipt"></i> Transactions</a>
     <a class="nav-item" href="order_queue.php"><i class="fas fa-list-check"></i> Order Queue</a><a class="nav-item" href="transaction_history.php">
-        <i class="fas fa-clock-rotate-left"></i> Transaction History</a><a class="nav-item" href="products.php"><i class="fas fa-boxes-stacked"></i> Products</a><a class="nav-item" href="inventory.php"><i class="fas fa-warehouse"></i> Inventory</a><a class="nav-item active" href="expenses.php"><i class="fas fa-wallet"></i> Expenses</a><a class="nav-item" href="reports.php"><i class="fas fa-chart-bar"></i> Sales Report</a><a class="nav-item" href="users.php"><i class="fas fa-users-gear"></i> User Management</a><hr class="divider">
+        <i class="fas fa-clock-rotate-left"></i> Transaction History</a><a class="nav-item" href="products.php"><i class="fas fa-boxes-stacked"></i> Products</a><a class="nav-item" href="inventory.php"><i class="fas fa-warehouse"></i> Inventory<?php if ($ingredientAlertCount > 0): ?><span class="nav-badge"><?= $ingredientAlertCount ?></span><?php endif; ?></a><a class="nav-item active" href="expenses.php"><i class="fas fa-wallet"></i> Expenses</a><a class="nav-item" href="reports.php"><i class="fas fa-chart-bar"></i> Sales Report</a><a class="nav-item" href="users.php"><i class="fas fa-users-gear"></i> User Management</a><hr class="divider">
 <div class="section">Settings</div><a class="nav-item" href="settings.php"><i class="fas fa-gear"></i> System Settings</a>
-<a class="nav-item" href="backup.php"><i class="fas fa-database"></i> Log</a>
+<a class="nav-item" href="backup.php"><i class="fas fa-database"></i> Backup & Recovery</a>
 <div class="sidebar-footer"><p>SmartStock v1.0<br>Bean There Café<br>ISO/IEC 25010 Compliant</p></div></nav>
 
 

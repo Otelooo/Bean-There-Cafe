@@ -8,7 +8,16 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'cafe owner') {
     exit;
 }
 
+if (empty($_SESSION['users_csrf'])) {
+    $_SESSION['users_csrf'] = bin2hex(random_bytes(32));
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!hash_equals($_SESSION['users_csrf'], (string)($_POST['csrf_token'] ?? ''))) {
+        http_response_code(400);
+        exit('Invalid request token. Reload the page and try again.');
+    }
+
     $action = $_POST['action'] ?? '';
     $msg = '';
     $msgType = 'success';
@@ -16,25 +25,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'add') {
         $newUsername = trim($_POST['username'] ?? '');
         $newPassword = trim($_POST['password'] ?? '');
+        $newEmail = strtolower(trim((string)($_POST['email'] ?? '')));
         $newRole = $_POST['role'] ?? '';
 
-        if ($newUsername === '' || $newPassword === '' || !in_array($newRole, ['cafe owner', 'cafe staff'], true)) {
-            $msg = 'Please fill in all fields correctly.';
+        if ($newUsername === '' || $newPassword === '' || !filter_var($newEmail, FILTER_VALIDATE_EMAIL)
+            || !in_array($newRole, ['cafe owner', 'cafe staff'], true)) {
+            $msg = 'Please fill in all fields correctly, including a valid recovery email.';
             $msgType = 'warn';
         } else {
-            $check = $conn->prepare('SELECT user_id FROM users WHERE username = ?');
-            $check->bind_param('s', $newUsername);
+            $check = $conn->prepare('SELECT user_id FROM users WHERE username = ? OR email = ?');
+            $check->bind_param('ss', $newUsername, $newEmail);
             $check->execute();
             $exists = $check->get_result()->fetch_assoc();
             $check->close();
 
             if ($exists) {
-                $msg = 'That username is already taken.';
+                $msg = 'That username or email address is already registered.';
                 $msgType = 'warn';
             } else {
                 $hashed = password_hash($newPassword, PASSWORD_DEFAULT);
-                $insert = $conn->prepare("INSERT INTO users (username, password, role, status) VALUES (?, ?, ?, 'active')");
-                $insert->bind_param('sss', $newUsername, $hashed, $newRole);
+                $insert = $conn->prepare("INSERT INTO users (username, password, role, status, email) VALUES (?, ?, ?, 'active', ?)");
+                $insert->bind_param('ssss', $newUsername, $hashed, $newRole, $newEmail);
                 $insert->execute();
                 $insert->close();
                 $msg = 'Account created successfully.';
@@ -45,32 +56,52 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $editUsername = trim($_POST['username'] ?? '');
         $editRole = $_POST['role'] ?? '';
         $editPassword = trim($_POST['password'] ?? '');
+        $editEmail = strtolower(trim((string)($_POST['email'] ?? '')));
 
-        if ($editId <= 0 || $editUsername === '' || !in_array($editRole, ['cafe owner', 'cafe staff'], true)) {
-            $msg = 'Please fill in all fields correctly.';
+        if ($editId <= 0 || $editUsername === '' || !filter_var($editEmail, FILTER_VALIDATE_EMAIL)
+            || !in_array($editRole, ['cafe owner', 'cafe staff'], true)) {
+            $msg = 'Please fill in all fields correctly, including a valid recovery email.';
             $msgType = 'warn';
         } else {
-            $check = $conn->prepare('SELECT user_id FROM users WHERE username = ? AND user_id != ?');
-            $check->bind_param('si', $editUsername, $editId);
+            $check = $conn->prepare('SELECT user_id, email FROM users WHERE user_id = ?');
+            $check->bind_param('i', $editId);
+            $check->execute();
+            $existingUser = $check->get_result()->fetch_assoc();
+            $check->close();
+
+            $check = $conn->prepare('SELECT user_id FROM users WHERE (username = ? OR email = ?) AND user_id != ?');
+            $check->bind_param('ssi', $editUsername, $editEmail, $editId);
             $check->execute();
             $exists = $check->get_result()->fetch_assoc();
             $check->close();
 
-            if ($exists) {
-                $msg = 'That username is already taken.';
+            if (!$existingUser || ($editId === (int)($_SESSION['user_id'] ?? 0)
+                && strcasecmp((string)$existingUser['email'], $editEmail) !== 0)) {
+                $msg = 'Update your own recovery email from System Settings.';
+                $msgType = 'warn';
+            } elseif ($exists) {
+                $msg = 'That username or email address is already registered.';
                 $msgType = 'warn';
             } elseif ($editPassword !== '') {
                 $hashed = password_hash($editPassword, PASSWORD_DEFAULT);
-                $update = $conn->prepare('UPDATE users SET username = ?, role = ?, password = ? WHERE user_id = ?');
-                $update->bind_param('sssi', $editUsername, $editRole, $hashed, $editId);
+                $update = $conn->prepare('UPDATE users SET username = ?, role = ?, password = ?, email = ? WHERE user_id = ?');
+                $update->bind_param('ssssi', $editUsername, $editRole, $hashed, $editEmail, $editId);
                 $update->execute();
                 $update->close();
+                $clearOtp = $conn->prepare('DELETE FROM password_reset_otps WHERE user_id = ?');
+                $clearOtp->bind_param('i', $editId);
+                $clearOtp->execute();
+                $clearOtp->close();
                 $msg = 'Account updated successfully.';
             } else {
-                $update = $conn->prepare('UPDATE users SET username = ?, role = ? WHERE user_id = ?');
-                $update->bind_param('ssi', $editUsername, $editRole, $editId);
+                $update = $conn->prepare('UPDATE users SET username = ?, role = ?, email = ? WHERE user_id = ?');
+                $update->bind_param('sssi', $editUsername, $editRole, $editEmail, $editId);
                 $update->execute();
                 $update->close();
+                $clearOtp = $conn->prepare('DELETE FROM password_reset_otps WHERE user_id = ?');
+                $clearOtp->bind_param('i', $editId);
+                $clearOtp->execute();
+                $clearOtp->close();
                 $msg = 'Account updated successfully.';
             }
         }
@@ -102,6 +133,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $update->bind_param('si', $newStatus, $targetId);
             $update->execute();
             $update->close();
+            $clearOtp = $conn->prepare('DELETE FROM password_reset_otps WHERE user_id = ?');
+            $clearOtp->bind_param('i', $targetId);
+            $clearOtp->execute();
+            $clearOtp->close();
             $msg = $newStatus === 'inactive' ? 'Account deactivated.' : 'Account activated.';
         }
     }
@@ -126,7 +161,7 @@ $displayName = $_SESSION['username'] ?? 'Owner';
 $initials = strtoupper(substr($displayName, 0, 2));
 
 $users = [];
-$result = $conn->query('SELECT user_id, username, role, status, created_timestamp FROM users ORDER BY user_id');
+$result = $conn->query('SELECT user_id, username, role, status, email, created_timestamp FROM users ORDER BY user_id');
 while ($row = $result->fetch_assoc()) {
     $users[] = $row;
 }
@@ -1224,7 +1259,7 @@ while ($row = $result->fetch_assoc()) {
     <hr class="sidebar-divider" />
     <div class="sidebar-section-label">Settings</div>
     <a href="settings.php" class="nav-item"><i class="fas fa-gear"></i> System Settings</a>
-    <a href="backup.php" class="nav-item"><i class="fas fa-database"></i> Log
+    <a href="backup.php" class="nav-item"><i class="fas fa-database"></i> Backup & Recovery
     </a>
     <div class="sidebar-footer">
       <p>SmartStock v1.0<br />Bean There Café<br />ISO/IEC 25010 Compliant</p>
@@ -1267,6 +1302,7 @@ while ($row = $result->fetch_assoc()) {
           <thead>
             <tr>
               <th>Username</th>
+              <th>Recovery Email</th>
               <th>Role</th>
               <th>Status</th>
               <th>Created</th>
@@ -1286,14 +1322,16 @@ while ($row = $result->fetch_assoc()) {
               ?>
               <tr>
                 <td class="text-mono"><?= htmlspecialchars($u['username']) ?></td>
+                <td><?= htmlspecialchars($u['email'] ?? '') ?></td>
                 <td><span class="status-pill <?= $rolePillClass ?>"><?= $roleLabel ?></span></td>
                 <td><span class="status-pill <?= $statusPillClass ?>"><?= $statusLabel ?></span></td>
                 <td class="text-mono"><?= htmlspecialchars(date('M j, Y', strtotime($u['created_timestamp']))) ?></td>
                 <td style="display:flex;gap:6px;align-items:center;">
                   <button class="tbl-btn tbl-btn-edit"
-                    onclick="openEditModal(<?= (int)$u['user_id'] ?>, '<?= htmlspecialchars($u['username'], ENT_QUOTES) ?>', '<?= $u['role'] ?>')">Edit</button>
+                    onclick="openEditModal(<?= (int)$u['user_id'] ?>, '<?= htmlspecialchars($u['username'], ENT_QUOTES) ?>', '<?= $u['role'] ?>', '<?= base64_encode((string)$u['email']) ?>')">Edit</button>
                   <?php if ((int)$u['user_id'] !== (int)($_SESSION['user_id'] ?? 0)): ?>
                     <form method="POST" action="users.php" style="display:contents;">
+                      <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['users_csrf']) ?>">
                       <input type="hidden" name="action" value="toggle_status">
                       <input type="hidden" name="user_id" value="<?= (int)$u['user_id'] ?>">
                       <input type="hidden" name="new_status" value="<?= $nextStatus ?>">
@@ -1301,6 +1339,7 @@ while ($row = $result->fetch_assoc()) {
                     </form>
                     <form method="POST" action="users.php" style="display:contents;"
                       onsubmit="return confirm('Permanently delete the account &quot;<?= htmlspecialchars($u['username'], ENT_QUOTES) ?>&quot;? This cannot be undone.');">
+                      <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['users_csrf']) ?>">
                       <input type="hidden" name="action" value="delete">
                       <input type="hidden" name="user_id" value="<?= (int)$u['user_id'] ?>">
                       <button type="submit" class="tbl-btn tbl-btn-del">Delete</button>
@@ -1321,7 +1360,10 @@ while ($row = $result->fetch_assoc()) {
         Account</div>
       <div class="modal-sub">Create a new user account.</div>
       <form method="POST" action="users.php">
+        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['users_csrf']) ?>">
         <input type="hidden" name="action" value="add">
+        <div class="modal-field"><label>Recovery Email</label><input type="email" name="email"
+            placeholder="staff@example.com" required autocomplete="email" /></div>
         <div class="modal-field"><label>Username</label><input type="text" name="username"
             placeholder="firstname.lastname" required /></div>
         <div class="modal-field"><label>Role</label><select name="role">
@@ -1343,8 +1385,10 @@ while ($row = $result->fetch_assoc()) {
         Account</div>
       <div class="modal-sub">Update account details.</div>
       <form method="POST" action="users.php">
+        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['users_csrf']) ?>">
         <input type="hidden" name="action" value="edit">
         <input type="hidden" name="user_id" id="edit-user-id" value="" />
+        <div class="modal-field"><label>Recovery Email</label><input type="email" name="email" id="edit-email" required autocomplete="email" /></div>
         <div class="modal-field"><label>Username</label><input type="text" name="username" id="edit-username"
             required /></div>
         <div class="modal-field"><label>Role</label><select name="role" id="edit-role">
@@ -1443,10 +1487,11 @@ while ($row = $result->fetch_assoc()) {
       rows.forEach(r => r.style.display = r.textContent.toLowerCase().includes(q.toLowerCase()) ? '' : 'none');
     }
 
-    function openEditModal(id, username, role) {
+    function openEditModal(id, username, role, encodedEmail) {
       document.getElementById('edit-user-id').value = id;
       document.getElementById('edit-username').value = username;
       document.getElementById('edit-role').value = role;
+      document.getElementById('edit-email').value = atob(encodedEmail);
       openModal('modal-edit-user');
     }
 

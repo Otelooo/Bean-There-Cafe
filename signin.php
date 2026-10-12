@@ -430,23 +430,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
             <?php endif; ?>
             <a href="recover_account.php" class="link" id="help-modal-recover-link" style="display:none;text-align:center;font-weight:600;margin-top:4px;">
-                <i class="fas fa-user-shield" style="margin-right:6px;"></i>Are you the owner? Recover your account →
+                <i class="fas fa-envelope" style="margin-right:6px;"></i>Continue to password recovery →
             </a>
             <button type="button" class="signin-btn" style="margin-top:16px;" onclick="closeHelpModal()">Close</button>
         </div>
     </div>
 
     <script>
-        // Password resets and account help are both handled by the café owner/admin directly
-        // (no email/SMTP setup exists in this app, and the owner can already reset any user's
-        // password from User Management) — so both links open the same modal with different copy.
+        // Password recovery is self-service by email OTP; general account help remains owner-managed.
         function openHelpModal(type) {
             const title = document.getElementById('help-modal-title');
             const message = document.getElementById('help-modal-message');
             const recoverLink = document.getElementById('help-modal-recover-link');
             if (type === 'forgot') {
                 title.textContent = 'Forgot Your Password?';
-                message.textContent = 'Staff: the café owner/administrator resets your password directly from User Management — please reach out to them using the details below. Owner: if you set up security questions in Settings, you can recover this account yourself.';
+                message.textContent = 'Enter the email address registered to your account. We will send a one-time 6-digit code that expires after 10 minutes. If you cannot access your registered email, contact the café owner/administrator.';
                 recoverLink.style.display = 'block';
             } else {
                 title.textContent = 'Need Help?';

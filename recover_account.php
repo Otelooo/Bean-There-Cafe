@@ -1,122 +1,229 @@
 <?php
 session_start();
 require_once __DIR__ . '/db_connect.php';
+require_once __DIR__ . '/password_reset_helper.php';
 
-// Three-stage, session-driven wizard (PRG pattern — every POST redirects back to itself so a page
-// refresh never resubmits a step): 'username' -> 'answer' -> 'reset'. Only an owner-role account
-// with both security questions already configured (set up in Settings while still logged in) can
-// be recovered this way; staff accounts are reset by the owner instead, not through this page.
-const MAX_ANSWER_ATTEMPTS = 5;
+const OTP_LIFETIME_MINUTES = 10;
+const OTP_MAX_ATTEMPTS = 5;
+const OTP_MAX_REQUESTS_PER_HOUR = 5;
+const OTP_RESEND_COOLDOWN_SECONDS = 60;
+const PASSWORD_RESET_SESSION_LIFETIME = 600;
 
-function normalize_security_answer(string $answer): string
+function clear_recovery_session(): void
 {
-    return mb_strtolower(trim($answer));
+    unset(
+        $_SESSION['recovery_user_id'],
+        $_SESSION['recovery_email'],
+        $_SESSION['recovery_stage'],
+        $_SESSION['recovery_verified_at']
+    );
 }
 
-function reset_recovery_session(): void
+function recovery_csrf_token(): string
 {
-    unset($_SESSION['recovery_user_id'], $_SESSION['recovery_stage'], $_SESSION['recovery_attempts']);
+    if (empty($_SESSION['recovery_csrf_token'])) {
+        $_SESSION['recovery_csrf_token'] = bin2hex(random_bytes(32));
+    }
+    return $_SESSION['recovery_csrf_token'];
+}
+
+function issue_recovery_code(mysqli $conn, int $userId, string $email, string $username): bool
+{
+    $conn->begin_transaction();
+    try {
+        $stmt = $conn->prepare('INSERT IGNORE INTO password_reset_otps (user_id) VALUES (?)');
+        $stmt->bind_param('i', $userId);
+        $stmt->execute();
+        $stmt->close();
+
+        $stmt = $conn->prepare('SELECT request_count, rate_window_started_at, last_requested_at FROM password_reset_otps WHERE user_id = ? FOR UPDATE');
+        $stmt->bind_param('i', $userId);
+        $stmt->execute();
+        $row = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        $now = time();
+        $windowStartedAt = !empty($row['rate_window_started_at']) ? strtotime($row['rate_window_started_at']) : false;
+        $lastRequestedAt = !empty($row['last_requested_at']) ? strtotime($row['last_requested_at']) : false;
+        $requestCount = (int)$row['request_count'];
+
+        if ($windowStartedAt === false || $now - $windowStartedAt >= 3600) {
+            $requestCount = 0;
+            $windowStartedAt = $now;
+        }
+
+        if ($requestCount >= OTP_MAX_REQUESTS_PER_HOUR
+            || ($lastRequestedAt !== false && $now - $lastRequestedAt < OTP_RESEND_COOLDOWN_SECONDS)) {
+            $conn->commit();
+            return false;
+        }
+
+        $code = str_pad((string)random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+        $codeHash = password_hash($code, PASSWORD_DEFAULT);
+        $requestCount++;
+        $windowStarted = date('Y-m-d H:i:s', $windowStartedAt);
+        $stmt = $conn->prepare('UPDATE password_reset_otps SET otp_hash = ?, expires_at = DATE_ADD(NOW(), INTERVAL 10 MINUTE), attempts = 0, request_count = ?, rate_window_started_at = ?, last_requested_at = NOW() WHERE user_id = ?');
+        $stmt->bind_param('sisi', $codeHash, $requestCount, $windowStarted, $userId);
+        $stmt->execute();
+        $stmt->close();
+        $conn->commit();
+    } catch (Throwable $e) {
+        $conn->rollback();
+        throw $e;
+    }
+
+    try {
+        send_password_reset_code($email, $username, $code);
+        return true;
+    } catch (PHPMailer\PHPMailer\Exception | RuntimeException $e) {
+        error_log('Password reset email delivery failed for user ID ' . $userId . '.');
+        $stmt = $conn->prepare('UPDATE password_reset_otps SET otp_hash = NULL, expires_at = NULL WHERE user_id = ? AND otp_hash = ?');
+        $stmt->bind_param('is', $userId, $codeHash);
+        $stmt->execute();
+        $stmt->close();
+        return false;
+    }
 }
 
 $error = '';
-$stage = $_SESSION['recovery_stage'] ?? 'username';
+$notice = '';
+$stage = $_SESSION['recovery_stage'] ?? 'email';
+$token = recovery_csrf_token();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $action = $_POST['action'] ?? '';
+    if (!hash_equals($token, (string)($_POST['csrf_token'] ?? ''))) {
+        $error = 'This recovery request expired. Please try again.';
+    } else {
+        $action = $_POST['action'] ?? '';
 
-    if ($action === 'lookup') {
-        $lookupUsername = trim($_POST['username'] ?? '');
-        if ($lookupUsername === '') {
-            $error = 'Please enter the owner account\'s username.';
-        } else {
-            $stmt = $conn->prepare("SELECT user_id, security_question_1, security_question_2 FROM users WHERE username = ? AND role = 'cafe owner'");
-            $stmt->bind_param('s', $lookupUsername);
-            $stmt->execute();
-            $owner = $stmt->get_result()->fetch_assoc();
-            $stmt->close();
+        if ($action === 'request_code' || $action === 'resend_code') {
+            $email = strtolower(trim((string)($_POST['email'] ?? $_SESSION['recovery_email'] ?? '')));
+            if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                $error = 'Enter a valid email address.';
+            } else {
+                $stmt = $conn->prepare("SELECT user_id, username, email FROM users WHERE email = ? AND status = 'active' LIMIT 1");
+                $stmt->bind_param('s', $email);
+                $stmt->execute();
+                $account = $stmt->get_result()->fetch_assoc();
+                $stmt->close();
 
-            if ($owner && !empty($owner['security_question_1']) && !empty($owner['security_question_2'])) {
-                $_SESSION['recovery_user_id'] = (int)$owner['user_id'];
-                $_SESSION['recovery_stage'] = 'answer';
-                $_SESSION['recovery_attempts'] = 0;
+                $_SESSION['recovery_email'] = $email;
+                $_SESSION['recovery_user_id'] = $account ? (int)$account['user_id'] : 0;
+                $_SESSION['recovery_stage'] = 'code';
+
+                if ($account) {
+                    try {
+                        issue_recovery_code($conn, (int)$account['user_id'], $account['email'], $account['username']);
+                    } catch (Throwable $e) {
+                        error_log('Password reset code could not be issued for user ID ' . (int)$account['user_id'] . '.');
+                    }
+                }
+                $notice = 'If this email belongs to an active account and the request is permitted, a 6-digit code has been sent. Check your inbox and spam folder.';
+                header('Location: recover_account.php?requested=1');
+                exit;
+            }
+        } elseif ($action === 'verify_code' && $stage === 'code') {
+            $userId = (int)($_SESSION['recovery_user_id'] ?? 0);
+            $code = trim((string)($_POST['code'] ?? ''));
+            $verified = false;
+
+            if ($userId > 0 && preg_match('/^\d{6}$/', $code) === 1) {
+                $conn->begin_transaction();
+                try {
+                    $stmt = $conn->prepare('SELECT otp_hash, expires_at, attempts FROM password_reset_otps WHERE user_id = ? FOR UPDATE');
+                    $stmt->bind_param('i', $userId);
+                    $stmt->execute();
+                    $otp = $stmt->get_result()->fetch_assoc();
+                    $stmt->close();
+
+                    if ($otp && !empty($otp['otp_hash']) && strtotime($otp['expires_at']) > time()
+                        && (int)$otp['attempts'] < OTP_MAX_ATTEMPTS
+                        && password_verify($code, $otp['otp_hash'])) {
+                        $stmt = $conn->prepare('UPDATE password_reset_otps SET otp_hash = NULL, expires_at = NULL WHERE user_id = ?');
+                        $stmt->bind_param('i', $userId);
+                        $stmt->execute();
+                        $stmt->close();
+                        $verified = true;
+                    } elseif ($otp && !empty($otp['otp_hash'])) {
+                        $stmt = $conn->prepare('UPDATE password_reset_otps SET attempts = attempts + 1, otp_hash = IF(attempts + 1 >= ?, NULL, otp_hash), expires_at = IF(attempts + 1 >= ?, NULL, expires_at) WHERE user_id = ?');
+                        $maxAttempts = OTP_MAX_ATTEMPTS;
+                        $stmt->bind_param('iii', $maxAttempts, $maxAttempts, $userId);
+                        $stmt->execute();
+                        $stmt->close();
+                    }
+                    $conn->commit();
+                } catch (Throwable $e) {
+                    $conn->rollback();
+                    throw $e;
+                }
+            }
+
+            if ($verified) {
+                session_regenerate_id(true);
+                $_SESSION['recovery_stage'] = 'reset';
+                $_SESSION['recovery_verified_at'] = time();
                 header('Location: recover_account.php');
                 exit;
             }
-            // Same message whether the username doesn't exist, isn't an owner, or has no
-            // questions set up — avoids confirming which of those is true to an outside visitor.
-            $error = "We couldn't find a recoverable owner account with that username. Security questions may not be set up yet — see Settings → Account Recovery once signed in.";
-        }
-    } elseif ($action === 'verify' && $stage === 'answer') {
-        $userId = (int)($_SESSION['recovery_user_id'] ?? 0);
-        $stmt = $conn->prepare("SELECT security_answer_1_hash, security_answer_2_hash FROM users WHERE user_id = ? AND role = 'cafe owner'");
-        $stmt->bind_param('i', $userId);
-        $stmt->execute();
-        $owner = $stmt->get_result()->fetch_assoc();
-        $stmt->close();
+            $error = 'That code is invalid, expired, or no longer available. Request a new code and try again.';
+        } elseif ($action === 'reset_password' && $stage === 'reset') {
+            $userId = (int)($_SESSION['recovery_user_id'] ?? 0);
+            $verifiedAt = (int)($_SESSION['recovery_verified_at'] ?? 0);
+            $newPassword = (string)($_POST['password'] ?? '');
+            $confirmPassword = (string)($_POST['confirm_password'] ?? '');
 
-        $a1 = normalize_security_answer($_POST['answer_1'] ?? '');
-        $a2 = normalize_security_answer($_POST['answer_2'] ?? '');
+            if ($userId <= 0 || $verifiedAt <= 0 || time() - $verifiedAt > PASSWORD_RESET_SESSION_LIFETIME) {
+                clear_recovery_session();
+                $stage = 'email';
+                $error = 'Your verification has expired. Please request a new code.';
+            } elseif ($newPassword === '') {
+                $error = 'Password cannot be empty.';
+            } elseif (strlen($newPassword) > 72) {
+                $error = 'Password must be no more than 72 bytes long.';
+            } elseif ($newPassword !== $confirmPassword) {
+                $error = 'Passwords do not match.';
+            } else {
+                $hashed = password_hash($newPassword, PASSWORD_DEFAULT);
+                $stmt = $conn->prepare("UPDATE users SET password = ? WHERE user_id = ? AND status = 'active'");
+                $stmt->bind_param('si', $hashed, $userId);
+                $stmt->execute();
+                $updated = $stmt->affected_rows === 1;
+                $stmt->close();
 
-        if ($owner && password_verify($a1, $owner['security_answer_1_hash']) && password_verify($a2, $owner['security_answer_2_hash'])) {
-            $_SESSION['recovery_stage'] = 'reset';
+                if ($updated) {
+                    $stmt = $conn->prepare('DELETE FROM password_reset_otps WHERE user_id = ?');
+                    $stmt->bind_param('i', $userId);
+                    $stmt->execute();
+                    $stmt->close();
+                    clear_recovery_session();
+                    header('Location: signin.php?recovered=1');
+                    exit;
+                }
+                clear_recovery_session();
+                $stage = 'email';
+                $error = 'This account can no longer be reset. Please contact the café owner.';
+            }
+        } elseif ($action === 'start_over') {
+            clear_recovery_session();
             header('Location: recover_account.php');
             exit;
-        }
-
-        $_SESSION['recovery_attempts'] = ($_SESSION['recovery_attempts'] ?? 0) + 1;
-        if ($_SESSION['recovery_attempts'] >= MAX_ANSWER_ATTEMPTS) {
-            reset_recovery_session();
-            $error = 'Too many incorrect attempts. Please start over.';
-            $stage = 'username';
         } else {
-            $error = 'One or both answers were incorrect. Please try again.';
+            $error = 'This recovery step is no longer available. Please start over.';
         }
-    } elseif ($action === 'reset' && $stage === 'reset') {
-        $userId = (int)($_SESSION['recovery_user_id'] ?? 0);
-        $newPassword = trim($_POST['password'] ?? '');
-        $confirmPassword = trim($_POST['confirm_password'] ?? '');
-
-        if (strlen($newPassword) < 8) {
-            $error = 'Password must be at least 8 characters long.';
-        } elseif ($newPassword !== $confirmPassword) {
-            $error = 'Passwords do not match.';
-        } else {
-            $hashed = password_hash($newPassword, PASSWORD_DEFAULT);
-            $stmt = $conn->prepare("UPDATE users SET password = ? WHERE user_id = ? AND role = 'cafe owner'");
-            $stmt->bind_param('si', $hashed, $userId);
-            $stmt->execute();
-            $stmt->close();
-
-            reset_recovery_session();
-            header('Location: signin.php?recovered=1');
-            exit;
-        }
-    } elseif ($action === 'start_over') {
-        reset_recovery_session();
-        header('Location: recover_account.php');
-        exit;
     }
 }
 
-// Re-derive the stage from session after any POST handling above (may have changed it).
-$stage = $_SESSION['recovery_stage'] ?? 'username';
-
-$questions = ['', ''];
-if ($stage === 'answer') {
-    $userId = (int)($_SESSION['recovery_user_id'] ?? 0);
-    $stmt = $conn->prepare('SELECT security_question_1, security_question_2 FROM users WHERE user_id = ?');
-    $stmt->bind_param('i', $userId);
-    $stmt->execute();
-    $row = $stmt->get_result()->fetch_assoc();
-    $stmt->close();
-    if (!$row) {
-        // Session pointed at a user row that's gone — restart cleanly rather than show a broken form.
-        reset_recovery_session();
-        $stage = 'username';
-    } else {
-        $questions = [$row['security_question_1'], $row['security_question_2']];
-    }
+if (isset($_GET['requested']) && $_GET['requested'] === '1') {
+    $stage = 'code';
+    $notice = 'If this email belongs to an active account and the request is permitted, a 6-digit code has been sent. Check your inbox and spam folder.';
 }
+
+if (($_SESSION['recovery_stage'] ?? '') === 'reset'
+    && time() - (int)($_SESSION['recovery_verified_at'] ?? 0) > PASSWORD_RESET_SESSION_LIFETIME) {
+    clear_recovery_session();
+}
+$stage = $_SESSION['recovery_stage'] ?? 'email';
+$emailValue = (string)($_SESSION['recovery_email'] ?? '');
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -239,8 +346,8 @@ if ($stage === 'answer') {
         </div>
 
         <div class="step-indicator">
-            <div class="step-dot <?= $stage === 'username' ? 'active' : 'done' ?>"></div>
-            <div class="step-dot <?= $stage === 'answer' ? 'active' : ($stage === 'reset' ? 'done' : '') ?>"></div>
+            <div class="step-dot <?= $stage === 'email' ? 'active' : 'done' ?>"></div>
+            <div class="step-dot <?= $stage === 'code' ? 'active' : ($stage === 'reset' ? 'done' : '') ?>"></div>
             <div class="step-dot <?= $stage === 'reset' ? 'active' : '' ?>"></div>
         </div>
 
@@ -250,54 +357,65 @@ if ($stage === 'answer') {
         </div>
         <?php endif; ?>
 
-        <?php if ($stage === 'username'): ?>
-            <div class="signin-title">Recover Owner Account</div>
-            <p class="signin-subtitle">Enter the owner account's username to answer its security questions.</p>
+        <?php if ($notice): ?>
+        <div style="background:#eaf7ee;color:#2e7d32;padding:10px 14px;border-radius:8px;margin-bottom:20px;font-size:14px;text-align:center;">
+            <?= htmlspecialchars($notice) ?>
+        </div>
+        <?php endif; ?>
+
+        <?php if ($stage === 'email'): ?>
+            <div class="signin-title">Reset Your Password</div>
+            <p class="signin-subtitle">Enter the email address registered to your account. We will send a 6-digit verification code.</p>
             <form method="POST" action="recover_account.php">
-                <input type="hidden" name="action" value="lookup">
+                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($token) ?>">
+                <input type="hidden" name="action" value="request_code">
                 <div class="form-group">
-                    <label class="form-label" for="username">Owner Username</label>
-                    <input type="text" name="username" id="username" class="form-input" placeholder="Enter the owner's username" required autofocus>
+                    <label class="form-label" for="email">Registered Email</label>
+                    <input type="email" name="email" id="email" class="form-input" placeholder="you@example.com" required autofocus autocomplete="email" value="<?= htmlspecialchars($emailValue) ?>">
                 </div>
-                <button type="submit" class="signin-btn"><i class="fas fa-arrow-right"></i> Continue</button>
+                <button type="submit" class="signin-btn"><i class="fas fa-paper-plane"></i> Send Verification Code</button>
             </form>
 
-        <?php elseif ($stage === 'answer'): ?>
-            <div class="signin-title">Answer Security Questions</div>
-            <p class="signin-subtitle">Both answers must be correct to continue. Not case-sensitive.</p>
+        <?php elseif ($stage === 'code'): ?>
+            <div class="signin-title">Enter Verification Code</div>
+            <p class="signin-subtitle">Enter the 6-digit code sent to <?= htmlspecialchars($emailValue) ?>. The code expires in 10 minutes.</p>
             <form method="POST" action="recover_account.php">
-                <input type="hidden" name="action" value="verify">
+                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($token) ?>">
+                <input type="hidden" name="action" value="verify_code">
                 <div class="form-group">
-                    <label class="question-label"><?= htmlspecialchars($questions[0]) ?></label>
-                    <input type="text" name="answer_1" class="form-input" placeholder="Your answer" required autofocus autocomplete="off">
+                    <label class="form-label" for="code">Verification Code</label>
+                    <input type="text" name="code" id="code" class="form-input" placeholder="000000" required autofocus autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6">
                 </div>
-                <div class="form-group">
-                    <label class="question-label"><?= htmlspecialchars($questions[1]) ?></label>
-                    <input type="text" name="answer_2" class="form-input" placeholder="Your answer" required autocomplete="off">
-                </div>
-                <button type="submit" class="signin-btn"><i class="fas fa-check"></i> Verify Answers</button>
+                <button type="submit" class="signin-btn"><i class="fas fa-check"></i> Verify Code</button>
+            </form>
+            <form method="POST" action="recover_account.php" style="margin-top:10px;">
+                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($token) ?>">
+                <input type="hidden" name="action" value="resend_code">
+                <button type="submit" class="link" style="background:none;border:none;cursor:pointer;width:100%;">Send a new code</button>
             </form>
 
         <?php elseif ($stage === 'reset'): ?>
             <div class="signin-title">Set a New Password</div>
-            <p class="signin-subtitle">Answers verified. Choose a new password for this account.</p>
+            <p class="signin-subtitle">Email verified. Choose a new password for your account.</p>
             <form method="POST" action="recover_account.php">
-                <input type="hidden" name="action" value="reset">
+                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($token) ?>">
+                <input type="hidden" name="action" value="reset_password">
                 <div class="form-group">
                     <label class="form-label" for="password">New Password</label>
-                    <input type="password" name="password" id="password" class="form-input" placeholder="Min. 8 characters" required minlength="8" autofocus>
+                    <input type="password" name="password" id="password" class="form-input" placeholder="Enter a new password" required maxlength="72" autofocus autocomplete="new-password">
                 </div>
                 <div class="form-group">
                     <label class="form-label" for="confirm_password">Confirm Password</label>
-                    <input type="password" name="confirm_password" id="confirm_password" class="form-input" placeholder="Re-enter password" required minlength="8">
+                    <input type="password" name="confirm_password" id="confirm_password" class="form-input" placeholder="Re-enter password" required maxlength="72" autocomplete="new-password">
                 </div>
                 <button type="submit" class="signin-btn"><i class="fas fa-lock"></i> Reset Password</button>
             </form>
         <?php endif; ?>
 
         <div class="links-row">
-            <?php if ($stage !== 'username'): ?>
+            <?php if ($stage !== 'email'): ?>
                 <form method="POST" action="recover_account.php" style="display:inline;">
+                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($token) ?>">
                     <input type="hidden" name="action" value="start_over">
                     <button type="submit" class="link" style="background:none;border:none;cursor:pointer;padding:0;">Start Over</button>
                 </form>

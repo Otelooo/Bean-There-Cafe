@@ -2,11 +2,14 @@
 session_start();
 require_once __DIR__ . '/../db_connect.php';
 require_once __DIR__ . '/../settings_helper.php';
+require_once __DIR__ . '/../transaction_helper.php';
 
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'cafe staff') {
     header('Location: ../signin.php');
     exit;
 }
+
+ensure_daily_transaction_numbering($conn);
 
 $displayName = $_SESSION['username'] ?? 'Staff';
 $initials = strtoupper(substr($displayName, 0, 2));
@@ -56,7 +59,7 @@ $stmt->close();
 
 $recentTransactions = [];
 $stmt = $conn->prepare("
-    SELECT t.transaction_id, t.transaction_total, t.payment_method, t.transaction_status, t.order_status,
+    SELECT t.transaction_id, t.daily_transaction_number, t.transaction_total, t.payment_method, t.transaction_status, t.order_status,
            COALESCE(t.cashier_username, u.username, 'Deleted user') AS username,
            GROUP_CONCAT(CONCAT(ti.quantity, '\xc3\x97', COALESCE(ti.product_name_snapshot, p.product_name, 'Deleted product')) SEPARATOR ', ') AS items_summary
     FROM transactions t
@@ -64,7 +67,7 @@ $stmt = $conn->prepare("
     LEFT JOIN transaction_items ti ON ti.transaction_id = t.transaction_id
     LEFT JOIN products p ON p.product_id = ti.product_id
     WHERE t.user_id = ?
-    GROUP BY t.transaction_id, t.transaction_total, t.payment_method, t.transaction_status, t.order_status, t.cashier_username, u.username
+    GROUP BY t.transaction_id, t.daily_transaction_number, t.transaction_total, t.payment_method, t.transaction_status, t.order_status, t.cashier_username, u.username
     ORDER BY t.transaction_date DESC
     LIMIT 5
 ");
@@ -1293,7 +1296,7 @@ $ingredientAlertCount = $criticalIngredientCount + $lowIngredientCount;
                     $methodLabel = $tx['payment_method'] === 'online' ? 'Online' : 'Cash';
                   ?>
                   <tr>
-                    <td class="text-mono">#<?= (int)$tx['transaction_id'] ?></td>
+                    <td class="text-mono">#<?= (int)$tx['daily_transaction_number'] ?></td>
                     <td><?= htmlspecialchars($tx['items_summary'] ?? '—') ?></td>
                     <td class="text-mono text-gold">₱<?= number_format((float)$tx['transaction_total'], 2) ?></td>
                     <td><?= $methodLabel ?></td>

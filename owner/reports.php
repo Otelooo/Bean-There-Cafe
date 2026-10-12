@@ -1245,7 +1245,7 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
     <hr class="sidebar-divider" />
     <div class="sidebar-section-label">Settings</div>
     <a href="settings.php" class="nav-item"><i class="fas fa-gear"></i> System Settings</a>
-    <a href="backup.php" class="nav-item"><i class="fas fa-database"></i> Log
+    <a href="backup.php" class="nav-item"><i class="fas fa-database"></i> Backup & Recovery
     </a>
     <div class="sidebar-footer">
       <p>SmartStock v1.0<br />Bean There Café<br />ISO/IEC 25010 Compliant</p>

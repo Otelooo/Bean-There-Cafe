@@ -10,6 +10,7 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'cafe owner') {
 }
 
 ensure_transaction_item_discount_tracking($conn);
+ensure_daily_transaction_numbering($conn);
 
 const HISTORY_PER_PAGE = 25;
 
@@ -68,7 +69,7 @@ function build_history_result(mysqli $conn, string $dateFrom, string $dateTill, 
 
     // Completed sales whose queue orders are Done or Cancelled appear here. Voided transactions
     // are excluded from history, while removing a queue order does not delete its transaction.
-    $listSql = "SELECT t.transaction_id, t.transaction_date, t.transaction_total, t.transaction_status, t.order_status,
+    $listSql = "SELECT t.transaction_id, t.daily_transaction_number, t.transaction_date, t.transaction_total, t.transaction_status, t.order_status,
                        t.payment_method, t.table_number, t.discount, t.amount_tendered, t.amount_change, t.order_type, t.notes,
                        COALESCE(t.cashier_username, u.username, 'Deleted user') AS cashier_name
                 FROM transactions t
@@ -140,6 +141,7 @@ function build_history_result(mysqli $conn, string $dateFrom, string $dateTill, 
         $dt = new DateTime($t['transaction_date']);
         $transactions[] = [
             'id' => $tid,
+            'number' => (int)$t['daily_transaction_number'],
             'dateLabel' => $dt->format('M j, Y'),
             'timeLabel' => $dt->format('g:i A'),
             'cashier' => $t['cashier_name'],
@@ -190,7 +192,7 @@ function build_history_export(mysqli $conn, string $dateFrom, string $dateTill, 
     if ($categoryId > 0) { $types .= 'i'; $params[] = $categoryId; }
     if (!$allDay) { $types .= 'ii'; $params[] = $timeStart; $params[] = $timeEnd; }
 
-    $listSql = "SELECT t.transaction_id, t.transaction_date, t.transaction_total, t.transaction_status, t.order_status, t.discount,
+    $listSql = "SELECT t.transaction_id, t.daily_transaction_number, t.transaction_date, t.transaction_total, t.transaction_status, t.order_status, t.discount,
                        t.payment_method, t.table_number,
                        COALESCE(t.cashier_username, u.username, 'Deleted user') AS cashier_name
                 FROM transactions t
@@ -245,6 +247,7 @@ function build_history_export(mysqli $conn, string $dateFrom, string $dateTill, 
         $isCancelled = ($t['order_status'] === 'cancelled' || $t['transaction_status'] === 'cancelled');
         $transactions[] = [
             'id' => $tid,
+            'number' => (int)$t['daily_transaction_number'],
             'dateLabel' => $dt->format('M j, Y'),
             'timeLabel' => $dt->format('g:i A'),
             'cashier' => $t['cashier_name'],
@@ -624,7 +627,7 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
   <hr class="sidebar-divider"/>
   <div class="sidebar-section-label">Settings</div>
   <a href="settings.php" class="nav-item"><i class="fas fa-gear"></i>  System Settings</a>
-  <a href="backup.php" class="nav-item"><i class="fas fa-database"></i> Log</a>
+  <a href="backup.php" class="nav-item"><i class="fas fa-database"></i> Backup & Recovery</a>
   <div class="sidebar-footer">
     <p>SmartStock v1.0<br />Bean There Café<br />ISO/IEC 25010 Compliant</p>
   </div>
@@ -879,7 +882,7 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
         startY: 70,
         head: [['#', 'Date & Time', 'Items', 'Cashier', 'Payment', 'Table #', 'Total', 'Status']],
         body: rows.map(t => [
-          '#' + t.id, `${t.dateLabel} ${t.timeLabel}`, t.itemsSummary, t.cashier, t.paymentLabel, t.tableNumber || '—', money(t.total), t.statusLabel
+          '#' + t.number, `${t.dateLabel} ${t.timeLabel}`, t.itemsSummary, t.cashier, t.paymentLabel, t.tableNumber || '—', money(t.total), t.statusLabel
         ]),
         styles: { fontSize: 8, cellWidth: 'wrap' },
         columnStyles: { 2: { cellWidth: 260 } },
@@ -915,7 +918,7 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
     }
     tbody.innerHTML = transactions.map(t => `
       <tr>
-        <td class="text-mono">#${t.id}</td>
+        <td class="text-mono">#${t.number}</td>
         <td>${t.dateLabel}<br><span style="color:#aaa;font-size:11.5px;">${t.timeLabel}</span></td>
         <td>${historyItemsSummary(t)}</td>
         <td>${escapeHtml(t.cashier)}</td>
@@ -983,7 +986,7 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
     if (!t) return;
     currentDetailId = t.id;
     document.getElementById('txn-detail-cancel-btn').style.display = t.status === 'completed' ? 'inline-block' : 'none';
-    document.getElementById('txn-detail-title').innerHTML = `<i class="fas fa-receipt" style="color:var(--gold);margin-right:8px;"></i>Transaction #${t.id}`;
+    document.getElementById('txn-detail-title').innerHTML = `<i class="fas fa-receipt" style="color:var(--gold);margin-right:8px;"></i>Transaction #${t.number}`;
     document.getElementById('txn-detail-sub').innerHTML = `${t.dateLabel} · ${t.timeLabel} <span class="status-pill ${t.status === 'completed' ? 'pill-success' : 'pill-red'}" style="margin-left:6px;">${t.statusLabel}</span>`;
     document.getElementById('txn-detail-items').innerHTML = t.items.map(it => `
       <tr>
@@ -1075,7 +1078,7 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
         ${receiptSettings.cafeAddress ? `<div>${escapeHtml(receiptSettings.cafeAddress)}</div>` : ''}
         ${receiptSettings.cafeContact ? `<div>${escapeHtml(receiptSettings.cafeContact)}</div>` : ''}
         <h2>RECEIPT</h2>
-        <div>Transaction #${transaction.id}</div>
+        <div>Transaction #${transaction.number}</div>
         <div>${escapeHtml(transaction.dateLabel)} · ${escapeHtml(transaction.timeLabel)}</div>
       </header>
       <div class="items">${itemRows || '<div>No items recorded</div>'}</div>
@@ -1095,7 +1098,7 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
 
     const printDoc = printWindow.document;
     printDoc.open();
-    printDoc.write(`<!doctype html><html><head><meta charset="utf-8"><title>Receipt #${transaction.id}</title><style id="receipt-style">
+    printDoc.write(`<!doctype html><html><head><meta charset="utf-8"><title>Receipt #${transaction.number}</title><style id="receipt-style">
       @page { size: 80mm 200mm; margin: 0; }
       * { box-sizing: border-box; }
       html, body { width: 80mm; margin: 0; padding: 0; color: #000; font: 12px Arial, sans-serif; }
@@ -1158,7 +1161,8 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
         showToast(data.error || 'Could not cancel this order.', 'warn');
         return;
       }
-      showToast(`Transaction #${id} cancelled — stock restored.`, 'success');
+      const transaction = currentTransactions.find(item => item.id === id);
+      showToast(`Transaction #${transaction?.number ?? id} cancelled — stock restored.`, 'success');
       await fetchHistory();
       openTxnDetail(id);
     } catch (err) {

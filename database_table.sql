@@ -202,6 +202,7 @@ DROP TABLE IF EXISTS `transactions`;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `transactions` (
   `transaction_id` int NOT NULL AUTO_INCREMENT,
+  `daily_transaction_number` int unsigned DEFAULT NULL,
   `user_id` int DEFAULT NULL,
   `cashier_username` varchar(50) DEFAULT NULL,
   `transaction_date` datetime NOT NULL,
@@ -224,6 +225,17 @@ CREATE TABLE `transactions` (
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
+-- Table structure for table `daily_transaction_sequences`
+--
+
+DROP TABLE IF EXISTS `daily_transaction_sequences`;
+CREATE TABLE `daily_transaction_sequences` (
+  `sequence_date` date NOT NULL,
+  `last_number` int unsigned NOT NULL,
+  PRIMARY KEY (`sequence_date`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+--
 -- Table structure for table `users`
 --
 
@@ -236,15 +248,34 @@ CREATE TABLE `users` (
   `password` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
   `role` enum('cafe owner','cafe staff') CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci NOT NULL,
   `status` enum('active','inactive') NOT NULL DEFAULT 'active',
+  `email` varchar(254) DEFAULT NULL,
   `security_question_1` varchar(255) DEFAULT NULL,
   `security_answer_1_hash` varchar(255) DEFAULT NULL,
   `security_question_2` varchar(255) DEFAULT NULL,
   `security_answer_2_hash` varchar(255) DEFAULT NULL,
   `created_timestamp` timestamp NOT NULL DEFAULT (now()),
   PRIMARY KEY (`user_id`),
-  UNIQUE KEY `username` (`username`)
+  UNIQUE KEY `username` (`username`),
+  UNIQUE KEY `users_email_unique` (`email`)
 ) ENGINE=InnoDB AUTO_INCREMENT=6 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `password_reset_otps`
+--
+
+DROP TABLE IF EXISTS `password_reset_otps`;
+CREATE TABLE `password_reset_otps` (
+  `user_id` int NOT NULL,
+  `otp_hash` varchar(255) DEFAULT NULL,
+  `expires_at` datetime DEFAULT NULL,
+  `attempts` tinyint unsigned NOT NULL DEFAULT 0,
+  `request_count` tinyint unsigned NOT NULL DEFAULT 0,
+  `rate_window_started_at` datetime DEFAULT NULL,
+  `last_requested_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`user_id`),
+  CONSTRAINT `password_reset_otps_user_fk` FOREIGN KEY (`user_id`) REFERENCES `users` (`user_id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 --
 -- Dumping routines for database 'bean_there_cafe'

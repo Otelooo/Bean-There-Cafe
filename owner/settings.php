@@ -8,6 +8,59 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'cafe owner') {
     exit;
 }
 
+if (empty($_SESSION['owner_recovery_csrf'])) {
+    $_SESSION['owner_recovery_csrf'] = bin2hex(random_bytes(32));
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_recovery_email') {
+    $ownerId = (int)$_SESSION['user_id'];
+    $email = strtolower(trim((string)($_POST['recovery_email'] ?? '')));
+    $currentPassword = (string)($_POST['current_password'] ?? '');
+    $msgType = 'warn';
+
+    if (!hash_equals($_SESSION['owner_recovery_csrf'], (string)($_POST['csrf_token'] ?? ''))) {
+        $msg = 'This request expired. Please try again.';
+    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        $msg = 'Enter a valid recovery email address.';
+    } elseif ($currentPassword === '') {
+        $msg = 'Enter your current password to change the recovery email.';
+    } else {
+        $stmt = $conn->prepare("SELECT password FROM users WHERE user_id = ? AND role = 'cafe owner'");
+        $stmt->bind_param('i', $ownerId);
+        $stmt->execute();
+        $ownerPassword = $stmt->get_result()->fetch_assoc()['password'] ?? '';
+        $stmt->close();
+
+        if (!password_verify($currentPassword, $ownerPassword)) {
+            $msg = 'Current password is incorrect.';
+        } else {
+            $stmt = $conn->prepare('SELECT user_id FROM users WHERE email = ? AND user_id <> ?');
+            $stmt->bind_param('si', $email, $ownerId);
+            $stmt->execute();
+            $emailInUse = $stmt->get_result()->fetch_assoc();
+            $stmt->close();
+
+            if ($emailInUse) {
+                $msg = 'That email address is already registered to another account.';
+            } else {
+                $stmt = $conn->prepare('UPDATE users SET email = ? WHERE user_id = ?');
+                $stmt->bind_param('si', $email, $ownerId);
+                $stmt->execute();
+                $stmt->close();
+                $stmt = $conn->prepare('DELETE FROM password_reset_otps WHERE user_id = ?');
+                $stmt->bind_param('i', $ownerId);
+                $stmt->execute();
+                $stmt->close();
+                $msg = 'Recovery email saved.';
+                $msgType = 'success';
+            }
+        }
+    }
+
+    header('Location: settings.php?msg=' . urlencode($msg) . '&type=' . urlencode($msgType));
+    exit;
+}
+
 // Preset options for the "Account Recovery" security-question picker below — the owner can also
 // type a fully custom question via the <select>'s "Write your own…" option.
 const SECURITY_QUESTION_PRESETS = [
@@ -29,7 +82,7 @@ function normalize_security_answer(string $answer): string
 
 // Separate action from the main café-settings save below — this updates the logged-in owner's own
 // users row, not the shared system_settings table, so it gets its own form and its own handler.
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_security_questions') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'save_security_questions_legacy_disabled') {
     $ownerId = (int)$_SESSION['user_id'];
     $q1 = trim($_POST['security_question_1'] ?? '');
     $a1 = trim($_POST['security_answer_1'] ?? '');
@@ -133,12 +186,11 @@ $taxRatePercentDisplay = rtrim(rtrim(number_format((float)$settings['tax_rate'] 
 $discountRatePercentDisplay = rtrim(rtrim(number_format((float)$settings['discount_rate'] * 100, 2, '.', ''), '0'), '.');
 
 $ownerId = (int)$_SESSION['user_id'];
-$stmt = $conn->prepare('SELECT security_question_1, security_question_2 FROM users WHERE user_id = ?');
+$stmt = $conn->prepare('SELECT email FROM users WHERE user_id = ?');
 $stmt->bind_param('i', $ownerId);
 $stmt->execute();
-$ownerSecurityRow = $stmt->get_result()->fetch_assoc();
+$ownerAccount = $stmt->get_result()->fetch_assoc();
 $stmt->close();
-$hasSecurityQuestions = !empty($ownerSecurityRow['security_question_1']) && !empty($ownerSecurityRow['security_question_2']);
 
 // Feeds the "Inventory" nav-badge — ingredients at critical OR low stock (not products).
 $lowThresholdFloat = (float)$settings['low_stock_threshold'];
@@ -359,7 +411,7 @@ $stmt->close();
   <hr class="sidebar-divider"/>
   <div class="sidebar-section-label">Settings</div>
   <a href="settings.php" class="nav-item active"><i class="fas fa-gear"></i> System Settings</a>
-  <a href="backup.php" class="nav-item"><i class="fas fa-database"></i> Log</a>
+  <a href="backup.php" class="nav-item"><i class="fas fa-database"></i> Backup & Recovery</a>
   <div class="sidebar-footer">
     <p>SmartStock v1.0<br />Bean There Café<br />ISO/IEC 25010 Compliant</p>
   </div>
@@ -465,59 +517,24 @@ $stmt->close();
     </div>
   </form>
 
-  <form method="POST" action="settings.php" style="padding:0 26px 22px;" onsubmit="return validateSecurityQuestionsForm(this);">
-    <input type="hidden" name="action" value="save_security_questions">
+  <form method="POST" action="settings.php" style="padding:0 26px 22px;">
+    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['owner_recovery_csrf']) ?>">
+    <input type="hidden" name="action" value="save_recovery_email">
     <div class="settings-grid">
       <div class="settings-card" style="grid-column:1/-1;">
-        <div class="settings-card-title"><i class="fas fa-key"></i>Account Recovery</div>
-        <div class="settings-card-sub">
-          <?php if ($hasSecurityQuestions): ?>
-            Security questions are set up for your owner login (<strong><?= htmlspecialchars($displayName) ?></strong>). Saving again replaces both questions and answers.
-          <?php else: ?>
-            <strong>Not set up yet.</strong> If you ever forget this account's password, there's no one above the owner role to reset it for you — these questions are the only way back in. Set them up now, while you still have access.
-          <?php endif; ?>
-        </div>
+        <div class="settings-card-title"><i class="fas fa-envelope"></i>Password Recovery</div>
+        <div class="settings-card-sub">A one-time code will be sent to this address when someone requests a password reset. Changing this address requires your current password.</div>
         <div class="settings-field-row">
           <div class="settings-field">
-            <label>Security Question 1</label>
-            <select class="security-question-select" onchange="toggleCustomQuestion(this)" required>
-              <option value="">Choose a question…</option>
-              <?php foreach (SECURITY_QUESTION_PRESETS as $preset): ?>
-                <option value="<?= htmlspecialchars($preset) ?>"<?= ($ownerSecurityRow['security_question_1'] ?? '') === $preset ? ' selected' : '' ?>><?= htmlspecialchars($preset) ?></option>
-              <?php endforeach; ?>
-              <option value="__custom__"<?= (!empty($ownerSecurityRow['security_question_1']) && !in_array($ownerSecurityRow['security_question_1'], SECURITY_QUESTION_PRESETS, true)) ? ' selected' : '' ?>>Write your own…</option>
-            </select>
-            <div class="security-question-custom">
-              <input type="text" class="security-question-custom-input" placeholder="Type your own question" maxlength="255" value="<?= (!empty($ownerSecurityRow['security_question_1']) && !in_array($ownerSecurityRow['security_question_1'], SECURITY_QUESTION_PRESETS, true)) ? htmlspecialchars($ownerSecurityRow['security_question_1']) : '' ?>">
-            </div>
-            <input type="hidden" name="security_question_1" class="security-question-hidden">
+            <label for="recovery-email">Recovery Email Address</label>
+            <input id="recovery-email" type="email" name="recovery_email" value="<?= htmlspecialchars($ownerAccount['email'] ?? '') ?>" maxlength="254" autocomplete="email" required>
           </div>
           <div class="settings-field">
-            <label>Answer 1</label>
-            <input type="text" name="security_answer_1" placeholder="Answer (not case-sensitive)" autocomplete="off">
+            <label for="recovery-current-password">Current Password</label>
+            <input id="recovery-current-password" type="password" name="current_password" autocomplete="current-password" required>
           </div>
         </div>
-        <div class="settings-field-row">
-          <div class="settings-field">
-            <label>Security Question 2</label>
-            <select class="security-question-select" onchange="toggleCustomQuestion(this)" required>
-              <option value="">Choose a question…</option>
-              <?php foreach (SECURITY_QUESTION_PRESETS as $preset): ?>
-                <option value="<?= htmlspecialchars($preset) ?>"<?= ($ownerSecurityRow['security_question_2'] ?? '') === $preset ? ' selected' : '' ?>><?= htmlspecialchars($preset) ?></option>
-              <?php endforeach; ?>
-              <option value="__custom__"<?= (!empty($ownerSecurityRow['security_question_2']) && !in_array($ownerSecurityRow['security_question_2'], SECURITY_QUESTION_PRESETS, true)) ? ' selected' : '' ?>>Write your own…</option>
-            </select>
-            <div class="security-question-custom">
-              <input type="text" class="security-question-custom-input" placeholder="Type your own question" maxlength="255" value="<?= (!empty($ownerSecurityRow['security_question_2']) && !in_array($ownerSecurityRow['security_question_2'], SECURITY_QUESTION_PRESETS, true)) ? htmlspecialchars($ownerSecurityRow['security_question_2']) : '' ?>">
-            </div>
-            <input type="hidden" name="security_question_2" class="security-question-hidden">
-          </div>
-          <div class="settings-field">
-            <label>Answer 2</label>
-            <input type="text" name="security_answer_2" placeholder="Answer (not case-sensitive)" autocomplete="off">
-          </div>
-        </div>
-        <button type="submit" class="btn-primary" style="margin-top:4px;"><i class="fas fa-shield-halved"></i> Save Recovery Questions</button>
+        <button type="submit" class="btn-primary" style="margin-top:4px;"><i class="fas fa-shield-halved"></i> Save Recovery Email</button>
       </div>
     </div>
   </form>

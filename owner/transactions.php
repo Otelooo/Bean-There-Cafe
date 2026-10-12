@@ -29,6 +29,7 @@ if ($tblColCheck && $row = $tblColCheck->fetch_assoc()) {
 }
 if ($tblColCheck) $tblColCheck->close();
 ensure_transaction_item_discount_tracking($conn);
+ensure_daily_transaction_numbering($conn);
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'checkout') {
     header('Content-Type: application/json');
@@ -313,8 +314,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         // Snapshot of exactly what was deducted per ingredient, so a later cancellation can restore
         // stock precisely even if the recipe (product_ingredient_items) has changed since this sale.
         $ingredientUsageSnapshot = json_encode($ingredientNeeds);
-        $insertTxn = $conn->prepare("INSERT INTO transactions (user_id, cashier_username, transaction_date, transaction_total, transaction_status, payment_method, discount, amount_tendered, amount_change, order_type, table_number, notes, ingredient_usage_snapshot) VALUES (?, ?, NOW(), ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?)");
-        $insertTxn->bind_param('isdsdddssss', $userId, $cashierUsername, $finalTotal, $paymentMethod, $discountAmount, $amountTendered, $amountChange, $orderType, $tableNumber, $notes, $ingredientUsageSnapshot);
+        $dailyTransactionNumber = next_daily_transaction_number($conn);
+        $insertTxn = $conn->prepare("INSERT INTO transactions (user_id, cashier_username, transaction_date, transaction_total, transaction_status, payment_method, discount, amount_tendered, amount_change, order_type, table_number, notes, ingredient_usage_snapshot, daily_transaction_number) VALUES (?, ?, NOW(), ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        $insertTxn->bind_param('isdsdddssssi', $userId, $cashierUsername, $finalTotal, $paymentMethod, $discountAmount, $amountTendered, $amountChange, $orderType, $tableNumber, $notes, $ingredientUsageSnapshot, $dailyTransactionNumber);
         $insertTxn->execute();
         $transactionId = $insertTxn->insert_id;
         $insertTxn->close();
@@ -349,6 +351,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         echo json_encode([
             'success' => true,
             'transaction_id' => $transactionId,
+            'daily_transaction_number' => $dailyTransactionNumber,
             'total' => $finalTotal,
             'discount' => $discountAmount,
         ]);
@@ -1782,7 +1785,7 @@ while ($row = $prodResult->fetch_assoc()) {
     <hr class="sidebar-divider" />
     <div class="sidebar-section-label">Settings</div>
     <a href="settings.php" class="nav-item"><i class="fas fa-gear"></i> System Settings</a>
-    <a href="backup.php" class="nav-item"><i class="fas fa-database"></i> Log
+    <a href="backup.php" class="nav-item"><i class="fas fa-database"></i> Backup & Recovery
     </a>
     <div class="sidebar-footer">
       <p>SmartStock v1.0<br />Bean There Café<br />ISO/IEC 25010 Compliant</p>
@@ -2057,6 +2060,7 @@ while ($row = $prodResult->fetch_assoc()) {
         }
         let cart = [];
         let currentTransactionId = null;
+        let currentDailyTransactionNumber = null;
         let currentCategory = 'all';
         const TAX_RATE = <?= (float)$settings['tax_rate'] ?>;
         const DISCOUNT_RATE = <?= (float)$settings['discount_rate'] ?>;
@@ -2659,6 +2663,7 @@ while ($row = $prodResult->fetch_assoc()) {
           document.getElementById('receipt-done-btn').style.display = 'none';
           document.getElementById('receipt-cancel-sale-btn').style.display = 'none';
           currentTransactionId = null;
+          currentDailyTransactionNumber = null;
 
           closeCheckoutModal();
           document.getElementById('receipt-modal').classList.add('show');
@@ -2720,7 +2725,8 @@ while ($row = $prodResult->fetch_assoc()) {
           }
 
           currentTransactionId = serverResult.transaction_id;
-          document.getElementById('receipt-content').innerHTML = buildReceiptHtml(serverResult.transaction_id);
+          currentDailyTransactionNumber = serverResult.daily_transaction_number;
+          document.getElementById('receipt-content').innerHTML = buildReceiptHtml(serverResult.daily_transaction_number);
           document.getElementById('receipt-back-row').style.display = 'none';
           document.getElementById('receipt-confirm-btn').style.display = 'none';
           document.getElementById('receipt-print-btn').style.display = 'block';
@@ -2756,7 +2762,7 @@ while ($row = $prodResult->fetch_assoc()) {
               btn.innerHTML = '<i class="fas fa-ban" style="margin-right:6px;"></i>Cancel This Sale';
               return;
             }
-            showToast(`Transaction #${currentTransactionId} cancelled — stock restored.`, 'success');
+            showToast(`Transaction #${currentDailyTransactionNumber} cancelled — stock restored.`, 'success');
             btn.style.display = 'none';
             document.getElementById('receipt-content').insertAdjacentHTML('afterbegin',
               '<div style="text-align:center;font-weight:800;color:var(--red-soft);letter-spacing:1px;margin-bottom:10px;">CANCELLED</div>');

@@ -2,11 +2,14 @@
 session_start();
 require_once __DIR__ . '/../db_connect.php';
 require_once __DIR__ . '/../settings_helper.php';
+require_once __DIR__ . '/../transaction_helper.php';
 
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'cafe staff') {
     header('Location: ../signin.php');
     exit;
 }
+
+ensure_daily_transaction_numbering($conn);
 
 $settings = get_system_settings($conn);
 
@@ -107,7 +110,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'remov
 // Fetch queued orders (transactions not yet removed from the queue) with their items
 $orders = [];
 $orderStmt = $conn->query("
-    SELECT t.transaction_id, t.transaction_date, t.transaction_total, t.transaction_status,
+    SELECT t.transaction_id, t.daily_transaction_number, t.transaction_date, t.transaction_total, t.transaction_status,
            t.order_status, t.payment_method, t.discount, t.order_type, t.table_number, t.notes,
            COALESCE(t.cashier_username, u.username, 'Deleted user') AS cashier_name
     FROM transactions t
@@ -456,8 +459,8 @@ $initials = strtoupper(substr($displayName, 0, 2));
                 }
               ?>
               <tr data-status="<?= htmlspecialchars($order['order_status']) ?>" data-txn-id="<?= $tid ?>">
-                <td class="col-check"><input type="checkbox" class="order-check order-checkbox" value="<?= $tid ?>" title="Select order #<?= $tid ?>" onchange="updateBulkRemoveState()"></td>
-                <td class="text-mono">#<?= $tid ?></td>
+                <td class="col-check"><input type="checkbox" class="order-check order-checkbox" value="<?= $tid ?>" title="Select order #<?= (int)$order['daily_transaction_number'] ?>" onchange="updateBulkRemoveState()"></td>
+                <td class="text-mono">#<?= (int)$order['daily_transaction_number'] ?></td>
                 <td>
                   <div style="font-weight:600;"><?= $dt->format('M j, Y') ?></div>
                   <div style="font-size:11px;color:#999;"><?= $dt->format('g:i A') ?></div>
@@ -547,6 +550,11 @@ $initials = strtoupper(substr($displayName, 0, 2));
   // Order data embedded for the detail modal
   const ordersData = <?= json_encode(array_values($orders), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
 
+  function getDailyTransactionNumber(transactionId) {
+    const order = ordersData.find(item => Number(item.transaction_id) === Number(transactionId));
+    return order ? order.daily_transaction_number : transactionId;
+  }
+
   function filterByStatus(status) {
     const rows = document.querySelectorAll('#order-tbody tr[data-status]');
     rows.forEach(row => {
@@ -584,7 +592,7 @@ $initials = strtoupper(substr($displayName, 0, 2));
         return;
       }
       select.dataset.originalStatus = newStatus;
-      showToast(`Order #${txnId} marked as ${newStatus}.`, 'success');
+      showToast(`Order #${getDailyTransactionNumber(txnId)} marked as ${newStatus}.`, 'success');
       setTimeout(() => location.reload(), 800);
     } catch (err) {
       showToast('Could not reach the server. Please try again.', 'warn');
@@ -597,7 +605,7 @@ $initials = strtoupper(substr($displayName, 0, 2));
 
   function confirmRemoveOrder(txnId) {
     pendingRemoveId = txnId;
-    document.getElementById('remove-order-id').textContent = txnId;
+    document.getElementById('remove-order-id').textContent = getDailyTransactionNumber(txnId);
     document.getElementById('remove-order-modal').classList.add('show');
   }
 
@@ -639,7 +647,7 @@ $initials = strtoupper(substr($displayName, 0, 2));
       }
 
       closeModal('remove-order-modal');
-      showToast(`Order #${txnId} removed from the queue.`, 'success');
+      showToast(`Order #${getDailyTransactionNumber(txnId)} removed from the queue.`, 'success');
       setTimeout(() => location.reload(), 800);
     } catch (err) {
       showToast('Could not reach the server. Please try again.', 'warn');
@@ -688,7 +696,7 @@ $initials = strtoupper(substr($displayName, 0, 2));
     pendingBulkIds = ids;
 
     document.getElementById('bulk-remove-count').textContent = ids.length;
-    const labels = ids.map(id => '#' + id);
+    const labels = ids.map(id => '#' + getDailyTransactionNumber(id));
     const summary = labels.length <= 5
       ? labels.join(', ')
       : labels.slice(0, 5).join(', ') + ' … +' + (labels.length - 5) + ' more';
@@ -756,7 +764,7 @@ $initials = strtoupper(substr($displayName, 0, 2));
     if (!order) return;
 
     const dt = new Date(order.transaction_date);
-    document.getElementById('order-detail-title').textContent = 'Order #' + txnId;
+    document.getElementById('order-detail-title').textContent = 'Order #' + order.daily_transaction_number;
     document.getElementById('order-detail-sub').textContent = dt.toLocaleString();
 
     // Items

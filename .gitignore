@@ -1,0 +1,6 @@
+# Backups contain sensitive business and account data — never commit them.
+/backups/
+/vendor/
+/.env
+/.env.*
+!/.env.example
