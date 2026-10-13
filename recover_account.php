@@ -331,8 +331,29 @@ $emailValue = (string)($_SESSION['recovery_email'] ?? '');
         .link { font-size: 13px; color: var(--mocha-mid); text-decoration: none; font-weight: 500; }
         .link:hover { color: var(--mocha); }
 
-        @media (max-width: 480px) {
-            .signin-container { padding: 32px 22px; }
+        @media (max-width: 640px) {
+            body {
+                align-items: flex-start;
+                padding: 24px 16px;
+            }
+
+            .signin-container {
+                padding: 32px 26px;
+                overflow-wrap: anywhere;
+            }
+
+            .brand-section { margin-bottom: 24px; }
+            .brand-logo { width: 54px; height: 54px; font-size: 23px; }
+            .brand-name { font-size: 20px; }
+            .signin-title, .signin-subtitle, .links-row { overflow-wrap: anywhere; }
+            .form-input, .signin-btn { min-width: 0; }
+        }
+
+        @media (max-width: 380px) {
+            body { padding: 14px 10px; }
+            .signin-container { padding: 26px 18px; }
+            .signin-subtitle { font-size: 13px; }
+            .signin-btn { padding: 13px 10px; font-size: 14px; }
         }
     </style>
 </head>

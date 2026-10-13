@@ -1189,6 +1189,66 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
     .btn-modal-cancel { width:100%; padding:9px; margin-top:7px; background:transparent; color:#bbb; border:1.5px solid var(--cream-dark); border-radius:8px; font-family:var(--font-body); font-size:13px; cursor:pointer; transition:all .2s; }
     .btn-modal-cancel:hover { color:var(--red-soft); border-color:var(--red-soft); }
 
+    .mobile-menu-toggle { display:none; align-items:center; justify-content:center; width:40px; height:40px; flex:0 0 40px; border:1px solid rgba(255,255,255,.16); border-radius:9px; background:rgba(255,255,255,.07); color:var(--cream); font-size:18px; cursor:pointer; }
+    #sidebar-backdrop { display:none; }
+    @media (max-width:900px) {
+      #sidebar { transform:translateX(-100%); visibility:hidden; transition:transform .22s ease,visibility .22s ease; }
+      body.sidebar-open #sidebar { transform:translateX(0); visibility:visible; }
+      body.sidebar-open { overflow:hidden; }
+      #sidebar-backdrop { display:block; position:fixed; inset:var(--header-h) 0 0; z-index:850; background:rgba(20,10,8,.48); opacity:0; visibility:hidden; transition:opacity .22s ease,visibility .22s ease; }
+      body.sidebar-open #sidebar-backdrop { opacity:1; visibility:visible; }
+      .mobile-menu-toggle { display:inline-flex; }
+      .header-brand { width:auto; padding:0 12px; border-right:0; }
+      .header-center { display:none; }
+      #main { margin-left:0; }
+      .page-strip { align-items:flex-start; padding:14px 18px; }
+      .report-page-actions { flex-wrap:wrap; justify-content:flex-end; }
+      #report-toolbar { flex-direction:column; align-items:stretch !important; overflow:visible !important; }
+      #period-tabs { width:100%; }
+      .report-filter-controls { display:grid !important; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px !important; width:100%; }
+      .report-filter-controls > * { min-width:0; }
+      .time-filter-wrapper { justify-content:center; }
+      .time-filter-wrapper input[type="date"] { width:min(110px,34vw); }
+      .report-kpis { grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); }
+    }
+    @media (max-width:600px) {
+      #app-header { padding-right:10px; }
+      .header-brand { gap:8px; padding:0 8px; }
+      .brand-logo { width:36px; height:36px; font-size:17px; }
+      .brand-text .name { font-size:13px; }
+      .brand-text .sub { font-size:8px; letter-spacing:1px; }
+      .header-clock, .header-user-name { display:none; }
+      .header-user { padding:4px; }
+      .logout-link { padding:7px 9px; font-size:0; }
+      .logout-link i { font-size:14px; }
+      .page-strip { flex-direction:column; gap:12px; padding:12px 14px; }
+      .page-strip h1 { font-size:18px; }
+      .report-page-actions { display:flex !important; flex-direction:column; width:100%; }
+      .report-page-actions button { width:100%; justify-content:center; }
+      #main > div[style*="padding:22px 26px"] { padding:12px !important; }
+      .report-filter-controls { display:flex !important; flex-direction:column; }
+      .report-filter-controls > *, .report-filter-controls select { width:100%; }
+      .time-filter-wrapper { width:100%; justify-content:space-between; }
+      .time-filter-wrapper input[type="date"] { width:36%; min-width:0; font-size:12px; }
+      .time-filter-wrapper[title="Filter by hours of the day"] #time-inputs { flex:1; min-width:0; gap:4px !important; padding-left:6px !important; }
+      #time-inputs input[type="time"] { width:72px; min-width:0; font-size:11px; }
+      .period-tab { flex:1; padding:7px 8px; }
+      .chart-card { padding:16px; }
+      .top-products-table thead { display:none; }
+      .top-products-table, .top-products-table tbody { display:block; width:100%; }
+      .top-products-table tr:not(.empty-row) { display:block; margin:0 0 10px; padding:6px 0; border:1px solid var(--cream-dark); border-radius:10px; background:var(--cream); }
+      .top-products-table td { display:grid; grid-template-columns:minmax(82px,30%) minmax(0,1fr); gap:9px; padding:8px 10px; border-bottom:1px solid rgba(232,216,186,.7); overflow-wrap:anywhere; }
+      .top-products-table td::before { content:attr(data-label); font-size:10px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; color:var(--mocha-mid); }
+      .top-products-table td:last-child { border-bottom:0; }
+      .top-products-table tr.empty-row td { display:block; text-align:center; }
+      .top-products-table tr.empty-row td::before { content:none; }
+      .modal-box { padding:20px 16px; }
+    }
+    @media (max-width:380px) {
+      .brand-text { display:none; }
+      .header-right { gap:5px; }
+    }
+
     @media print {
       #app-header, #sidebar, #report-toolbar, .page-strip .btn-outline, .page-strip .btn-primary, #toast-container, .modal-overlay {
         display: none !important;
@@ -1209,6 +1269,9 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
 <body>
 
   <header id="app-header">
+    <button class="mobile-menu-toggle" type="button" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false">
+      <i class="fas fa-bars" aria-hidden="true"></i>
+    </button>
     <div class="header-brand">
       <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
       <div class="brand-text">
@@ -1251,6 +1314,7 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
       <p>SmartStock v1.0<br />Bean There Café<br />ISO/IEC 25010 Compliant</p>
     </div>
   </nav>
+  <div id="sidebar-backdrop" aria-hidden="true"></div>
 
   <div id="main">
     <div class="page-strip">
@@ -1259,7 +1323,7 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
         </h1>
         <div class="sub">Analyze performance trends across time periods</div>
       </div>
-      <div style="display:flex;gap:8px;">
+      <div class="report-page-actions" style="display:flex;gap:8px;">
         <button class="btn-outline" onclick="printReport()"><i class="fas fa-print"></i>
           Print</button>
         <button class="btn-primary" id="export-pdf-btn" onclick="exportReportPdf()"><i class="fas fa-file-pdf"></i>
@@ -1279,7 +1343,7 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
           <button class="period-tab" onclick="switchPeriod('yearly',this)">Yearly</button>
         </div>
 
-        <div style="display:flex; gap:12px; align-items:center; flex-shrink:0;">
+        <div class="report-filter-controls" style="display:flex; gap:12px; align-items:center; flex-shrink:0;">
 
           <div class="time-filter-wrapper" title="Filter by hours of the day">
             <label class="all-day-label">
@@ -1381,7 +1445,7 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
         </select>
       </div>
       <div style="max-height:50vh;overflow-y:auto;">
-        <table class="rec-table">
+        <table class="rec-table top-products-table">
           <thead>
             <tr>
               <th>Rank</th>
@@ -1527,7 +1591,7 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
         : latestAllProducts.filter(p => String(p.category_id) === categoryId);
 
       if (matching.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#aaa;padding:20px 8px;">No sales recorded for this period yet.</td></tr>';
+        tbody.innerHTML = '<tr class="empty-row"><td colspan="6" style="text-align:center;color:#aaa;padding:20px 8px;">No sales recorded for this period yet.</td></tr>';
         lastTopProductsRendered = [];
         return;
       }
@@ -1547,12 +1611,12 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
       }));
       tbody.innerHTML = lastTopProductsRendered.map(p => `
         <tr>
-          <td>${medals[p.rank] || p.rank}</td>
-          <td style="font-weight:600;">${p.name}</td>
-          <td><span class="tag ${p.tag_class}">${p.category_name}</span></td>
-          <td class="text-mono">${p.units.toLocaleString()}</td>
-          <td class="text-mono text-gold">${money(p.revenue)}</td>
-          <td>
+          <td data-label="Rank">${medals[p.rank] || p.rank}</td>
+          <td data-label="Product" style="font-weight:600;">${p.name}</td>
+          <td data-label="Category"><span class="tag ${p.tag_class}">${p.category_name}</span></td>
+          <td class="text-mono" data-label="Units Sold">${p.units.toLocaleString()}</td>
+          <td class="text-mono text-gold" data-label="Revenue">${money(p.revenue)}</td>
+          <td data-label="Share">
             <div style="display:flex;align-items:center;gap:7px;">
               <div style="width:70px;height:6px;background:var(--cream-dark);border-radius:3px;overflow:hidden;">
                 <div style="width:${p.share}%;height:100%;background:var(--gold);border-radius:3px;"></div>
@@ -1726,6 +1790,32 @@ $initialReport = build_sales_report($conn, 'daily', 0, $todayStr, $todayStr, tru
       setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, 2800);
     }
   </script>
-</body>
+  <script>
+    (() => {
+      const toggle = document.querySelector('.mobile-menu-toggle');
+      const backdrop = document.getElementById('sidebar-backdrop');
+      const closeSidebar = () => {
+        document.body.classList.remove('sidebar-open');
+        toggle.setAttribute('aria-expanded', 'false');
+        toggle.setAttribute('aria-label', 'Open navigation');
+        toggle.innerHTML = '<i class="fas fa-bars" aria-hidden="true"></i>';
+      };
+      toggle.addEventListener('click', () => {
+        const isOpen = document.body.classList.toggle('sidebar-open');
+        toggle.setAttribute('aria-expanded', String(isOpen));
+        toggle.setAttribute('aria-label', isOpen ? 'Close navigation' : 'Open navigation');
+        toggle.innerHTML = `<i class="fas ${isOpen ? 'fa-xmark' : 'fa-bars'}" aria-hidden="true"></i>`;
+      });
+      backdrop.addEventListener('click', closeSidebar);
+      document.querySelectorAll('#sidebar .nav-item').forEach(link => link.addEventListener('click', closeSidebar));
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') closeSidebar();
+      });
+      window.addEventListener('resize', () => {
+        if (window.innerWidth > 900) closeSidebar();
+      });
+    })();
+  </script>
+  </body>
 
 </html>

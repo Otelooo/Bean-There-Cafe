@@ -1218,6 +1218,49 @@ while ($row = $result->fetch_assoc()) {
       color: var(--red-soft);
       border-color: var(--red-soft);
     }
+    @media (max-width: 960px) {
+      .table-wrap { overflow: visible; border: 0; background: transparent; box-shadow: none; }
+      .data-table, .data-table tbody { display: block; width: 100%; }
+      .data-table thead { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+      .data-table tbody tr { display: block; margin-bottom: 12px; padding: 8px 15px; border: 1px solid var(--cream-dark); border-radius: var(--radius); background: var(--cream); box-shadow: var(--shadow-sm); }
+      .data-table td { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--cream-dark); overflow-wrap: anywhere; }
+      .data-table td::before { content: attr(data-label); flex: 0 0 98px; font-size: 10px; font-weight: 700; letter-spacing: .7px; text-transform: uppercase; color: var(--mocha-mid); }
+      .data-table td:last-child { border-bottom: 0; }
+      .data-table td[data-label="Actions"] { flex-wrap: wrap; }
+      .data-table td[data-label="Actions"]::before { flex-basis: 100%; }
+      .data-table td[data-label="Actions"] form { display: inline-flex !important; }
+    }
+    .menu-toggle { display: none; }
+    @media (max-width: 760px) {
+      .header-brand { width: auto; flex: 1; border: 0; }
+      .header-center { display: none; }
+      .brand-text .sub, .header-user, .header-clock { display: none; }
+      .menu-toggle {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 40px; height: 40px; margin-left: auto; border: 1px solid rgba(255,255,255,.16);
+        border-radius: 9px; background: rgba(255,255,255,.07); color: var(--cream);
+        font-size: 18px; cursor: pointer;
+      }
+      #sidebar { transform: translateX(-100%); transition: transform .22s ease; box-shadow: var(--shadow-lg); }
+      body.sidebar-open #sidebar { transform: translateX(0); }
+      body.sidebar-open::after { content: ""; position: fixed; inset: var(--header-h) 0 0; z-index: 899; background: rgba(20,10,8,.4); }
+      body.sidebar-open { overflow-y: hidden; }
+      #main { margin-left: 0; }
+      .page-strip { align-items: flex-start; flex-direction: column; gap: 12px; padding: 15px 18px; }
+      .page-strip .btn-primary { width: 100%; justify-content: center; }
+      .users-content { padding: 18px !important; }
+      .inv-toolbar { align-items: stretch; flex-direction: column; }
+      .search-box, .filter-select { width: 100%; min-width: 0; }
+      .modal-box { max-height: calc(100vh - 32px); overflow-y: auto; }
+    }
+    @media (max-width: 420px) {
+      #app-header { padding-right: 14px; }
+      .header-brand { gap: 8px; padding: 0 14px; }
+      .page-strip h1 { font-size: 19px; }
+      .users-content { padding: 14px !important; }
+      .data-table tbody tr { padding: 7px 12px; }
+      .data-table td::before { flex-basis: 82px; }
+    }
   </style>
 </head>
 
@@ -1230,6 +1273,7 @@ while ($row = $result->fetch_assoc()) {
         <div class="name">SmartStock</div>
         <div class="sub">Bean There Café</div>
       </div>
+      <button type="button" class="menu-toggle" id="sidebar-toggle" aria-label="Open navigation menu" aria-controls="sidebar" aria-expanded="false"><i class="fas fa-bars" aria-hidden="true"></i></button>
     </div>
     <div class="header-center"></div>
     <div class="header-right">
@@ -1282,7 +1326,7 @@ while ($row = $result->fetch_assoc()) {
       <button class="btn-primary" onclick="openModal('modal-add-user')"><i class="fas fa-user-plus"></i> Add
         User</button>
     </div>
-    <div style="padding:22px 26px;">
+    <div class="users-content" style="padding:22px 26px;">
       <div class="inv-toolbar">
         <div class="search-box"><i class="fas fa-magnifying-glass"></i><input type="text" placeholder="Search users…"
             oninput="filterUsers(this.value)" /></div>
@@ -1321,12 +1365,12 @@ while ($row = $result->fetch_assoc()) {
                 $toggleClass = $u['status'] === 'active' ? 'tbl-btn-del' : 'tbl-btn-act';
               ?>
               <tr>
-                <td class="text-mono"><?= htmlspecialchars($u['username']) ?></td>
-                <td><?= htmlspecialchars($u['email'] ?? '') ?></td>
-                <td><span class="status-pill <?= $rolePillClass ?>"><?= $roleLabel ?></span></td>
-                <td><span class="status-pill <?= $statusPillClass ?>"><?= $statusLabel ?></span></td>
-                <td class="text-mono"><?= htmlspecialchars(date('M j, Y', strtotime($u['created_timestamp']))) ?></td>
-                <td style="display:flex;gap:6px;align-items:center;">
+                <td class="text-mono" data-label="Username"><?= htmlspecialchars($u['username']) ?></td>
+                <td data-label="Recovery Email"><?= htmlspecialchars($u['email'] ?? '') ?></td>
+                <td data-label="Role"><span class="status-pill <?= $rolePillClass ?>"><?= $roleLabel ?></span></td>
+                <td data-label="Status"><span class="status-pill <?= $statusPillClass ?>"><?= $statusLabel ?></span></td>
+                <td class="text-mono" data-label="Created"><?= htmlspecialchars(date('M j, Y', strtotime($u['created_timestamp']))) ?></td>
+                <td data-label="Actions" style="display:flex;gap:6px;align-items:center;">
                   <button class="tbl-btn tbl-btn-edit"
                     onclick="openEditModal(<?= (int)$u['user_id'] ?>, '<?= htmlspecialchars($u['username'], ENT_QUOTES) ?>', '<?= $u['role'] ?>', '<?= base64_encode((string)$u['email']) ?>')">Edit</button>
                   <?php if ((int)$u['user_id'] !== (int)($_SESSION['user_id'] ?? 0)): ?>
@@ -1407,6 +1451,21 @@ while ($row = $result->fetch_assoc()) {
   <div id="toast-container"></div>
 
   <script>
+    const sidebarToggle = document.getElementById('sidebar-toggle');
+    const sidebar = document.getElementById('sidebar');
+    function setSidebarOpen(open) {
+      document.body.classList.toggle('sidebar-open', open);
+      sidebarToggle.setAttribute('aria-expanded', String(open));
+      sidebarToggle.setAttribute('aria-label', open ? 'Close navigation menu' : 'Open navigation menu');
+      sidebarToggle.innerHTML = `<i class="fas ${open ? 'fa-xmark' : 'fa-bars'}" aria-hidden="true"></i>`;
+    }
+    sidebarToggle.addEventListener('click', () => setSidebarOpen(!document.body.classList.contains('sidebar-open')));
+    document.addEventListener('click', event => {
+      if (document.body.classList.contains('sidebar-open') && !sidebar.contains(event.target) && !sidebarToggle.contains(event.target)) setSidebarOpen(false);
+    });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') setSidebarOpen(false); });
+    window.addEventListener('resize', () => { if (window.innerWidth > 760) setSidebarOpen(false); });
+
     const inventory = [
       { name: 'Espresso Beans (1kg)', cat: 'Supplies', stock: 15, cost: '₱850', price: '—', supplier: 'Benguet Coffee Co.', contact: '0917-234-5678', level: 'ok' },
       { name: 'Soy Milk (1L)', cat: 'Supplies', stock: 2, cost: '₱65', price: '—', supplier: 'Magnolia Foods', contact: '0918-345-6789', level: 'crit' },

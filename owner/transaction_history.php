@@ -589,11 +589,75 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
     .txn-summary-row { display:flex; justify-content:space-between; font-size:13px; padding:5px 0; }
     .txn-summary-row.total { font-weight:700; font-size:15px; color:var(--mocha-deep); border-top:1.5px solid var(--cream-dark); margin-top:6px; padding-top:10px; }
     .txn-summary-row.discount { color:var(--red-soft); }
+
+    .mobile-menu-toggle { display:none; align-items:center; justify-content:center; width:40px; height:40px; flex:0 0 40px; border:1px solid rgba(255,255,255,.16); border-radius:9px; background:rgba(255,255,255,.07); color:var(--cream); font-size:18px; cursor:pointer; }
+    #sidebar-backdrop { display:none; }
+    @media (max-width:900px) {
+      #sidebar { transform:translateX(-100%); visibility:hidden; transition:transform .22s ease,visibility .22s ease; }
+      body.sidebar-open #sidebar { transform:translateX(0); visibility:visible; }
+      body.sidebar-open { overflow:hidden; }
+      #sidebar-backdrop { display:block; position:fixed; inset:var(--header-h) 0 0; z-index:850; background:rgba(20,10,8,.48); opacity:0; visibility:hidden; transition:opacity .22s ease,visibility .22s ease; }
+      body.sidebar-open #sidebar-backdrop { opacity:1; visibility:visible; }
+      .mobile-menu-toggle { display:inline-flex; }
+      .header-brand { width:auto; padding:0 12px; border-right:0; }
+      .header-center { display:none; }
+      #main { margin-left:0; }
+      .history-toolbar { flex-direction:column !important; align-items:stretch !important; overflow:visible !important; }
+      .history-toolbar #period-tabs { width:100%; }
+      .history-filter-actions { display:grid !important; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px !important; width:100%; }
+      .history-filter-actions > * { min-width:0; }
+      .time-filter-wrapper { justify-content:center; min-width:0; }
+      .time-filter-wrapper input[type="date"] { width:min(110px,34vw); }
+      .data-table thead { display:none; }
+      .table-wrap { background:transparent; border:0; box-shadow:none; overflow:visible; }
+      .data-table, .data-table tbody { display:block; width:100%; }
+      .data-table tr:not(.empty-row) { display:block; margin-bottom:12px; padding:5px 0; border:1px solid var(--cream-dark); border-radius:12px; background:var(--cream); box-shadow:var(--shadow-sm); }
+      .data-table td { display:grid; grid-template-columns:minmax(82px,28%) minmax(0,1fr); gap:10px; padding:8px 12px; border-bottom:1px solid rgba(232,216,186,.7); overflow-wrap:anywhere; }
+      .data-table td::before { content:attr(data-label); font-size:10px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; color:var(--mocha-mid); }
+      .data-table td:last-child { border-bottom:0; }
+      .data-table tr.empty-row td { display:block; text-align:center; }
+      .data-table tr.empty-row td::before { content:none; }
+      .txn-detail-table thead { display:none; }
+      .txn-detail-table, .txn-detail-table tbody { display:block; width:100%; }
+      .txn-detail-table tr { display:block; margin-bottom:9px; padding:5px 0; border:1px solid var(--cream-dark); border-radius:9px; background:var(--cream); }
+      .txn-detail-table td { display:grid; grid-template-columns:75px minmax(0,1fr); gap:8px; padding:7px 9px; border-bottom:1px solid rgba(232,216,186,.7); overflow-wrap:anywhere; }
+      .txn-detail-table td::before { content:attr(data-label); font-size:10px; font-weight:700; text-transform:uppercase; color:var(--mocha-mid); }
+      .txn-detail-table td:last-child { border-bottom:0; }
+    }
+    @media (max-width:600px) {
+      #app-header { padding-right:10px; }
+      .header-brand { gap:8px; padding:0 8px; }
+      .brand-logo { width:36px; height:36px; font-size:17px; }
+      .brand-text .name { font-size:13px; }
+      .brand-text .sub { font-size:8px; letter-spacing:1px; }
+      .header-clock, .header-user-name { display:none; }
+      .header-user { padding:4px; }
+      .logout-link { padding:7px 9px; font-size:0; }
+      .logout-link i { font-size:14px; }
+      .page-strip { padding:12px 14px; }
+      .page-strip h1 { font-size:18px; }
+      #main > div[style*="padding:22px 26px"] { padding:12px !important; }
+      .history-filter-actions { display:flex !important; flex-direction:column; }
+      .history-filter-actions > *, .history-filter-actions select, .history-filter-actions button { width:100%; }
+      .time-filter-wrapper { width:100%; justify-content:space-between; }
+      .time-filter-wrapper input[type="date"] { width:36%; min-width:0; font-size:12px; }
+      .time-filter-wrapper[title="Filter by hours of the day"] #time-inputs { flex:1; min-width:0; gap:4px !important; padding-left:6px !important; }
+      #time-inputs input[type="time"] { width:72px; min-width:0; font-size:11px; }
+      .period-tab { flex:1; padding:7px 8px; }
+      #history-pagination { gap:8px; flex-wrap:wrap; }
+    }
+    @media (max-width:380px) {
+      .brand-text { display:none; }
+      .header-right { gap:5px; }
+    }
   </style>
 </head>
 <body>
 
 <header id="app-header">
+  <button class="mobile-menu-toggle" type="button" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false">
+    <i class="fas fa-bars" aria-hidden="true"></i>
+  </button>
   <div class="header-brand">
     <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
     <div class="brand-text"><div class="name">SmartStock</div><div class="sub">Bean There Café</div></div>
@@ -632,6 +696,7 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
     <p>SmartStock v1.0<br />Bean There Café<br />ISO/IEC 25010 Compliant</p>
   </div>
 </nav>
+<div id="sidebar-backdrop" aria-hidden="true"></div>
 
 <div id="main">
   <div class="page-strip">
@@ -642,14 +707,14 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
   </div>
   <div style="padding:22px 26px;">
 
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:nowrap; overflow-x:auto; padding-bottom:4px; gap:12px;">
+    <div class="history-toolbar" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:nowrap; overflow-x:auto; padding-bottom:4px; gap:12px;">
       <div class="period-tabs" id="period-tabs" style="flex-shrink:0;">
         <button class="period-tab active" onclick="switchPeriod('daily',this)">Day</button>
         <button class="period-tab" onclick="switchPeriod('weekly',this)">Week</button>
         <button class="period-tab" onclick="switchPeriod('monthly',this)">Month</button>
         <button class="period-tab" onclick="switchPeriod('yearly',this)">Year</button>
       </div>
-      <div style="display:flex; gap:12px; align-items:center; flex-wrap:nowrap; flex-shrink:0;">
+      <div class="history-filter-actions" style="display:flex; gap:12px; align-items:center; flex-wrap:nowrap; flex-shrink:0;">
         <div class="time-filter-wrapper" title="Filter by hours of the day">
           <label class="all-day-label">
             <input type="checkbox" id="all-day-cb" checked onchange="toggleAllDay()"> All Day
@@ -694,7 +759,7 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
   <div class="modal-box" style="max-width:560px;">
     <div class="modal-title" id="txn-detail-title"><i class="fas fa-receipt" style="color:var(--gold);margin-right:8px;"></i>Transaction</div>
     <div class="modal-sub" id="txn-detail-sub"></div>
-    <table class="rec-table">
+    <table class="rec-table txn-detail-table">
       <thead><tr><th>Item</th><th>Qty</th><th>Unit Price</th><th>Subtotal</th></tr></thead>
       <tbody id="txn-detail-items"></tbody>
     </table>
@@ -913,20 +978,20 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
   function renderHistoryTable(transactions) {
     const tbody = document.getElementById('history-tbody');
     if (!transactions || transactions.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#aaa;padding:24px 8px;">No transactions found for this period.</td></tr>';
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="9" style="text-align:center;color:#aaa;padding:24px 8px;">No transactions found for this period.</td></tr>';
       return;
     }
     tbody.innerHTML = transactions.map(t => `
       <tr>
-        <td class="text-mono">#${t.number}</td>
-        <td>${t.dateLabel}<br><span style="color:#aaa;font-size:11.5px;">${t.timeLabel}</span></td>
-        <td>${historyItemsSummary(t)}</td>
-        <td>${escapeHtml(t.cashier)}</td>
-        <td>${t.paymentLabel}</td>
-        <td>${escapeHtml(t.tableNumber || '—')}</td>
-        <td class="text-mono text-gold">${money(t.total)}</td>
-        <td><span class="status-pill ${t.status === 'completed' ? 'pill-success' : 'pill-red'}">${t.statusLabel}</span></td>
-        <td><button class="tbl-btn tbl-btn-edit" onclick="openTxnDetail(${t.id})"><i class="fas fa-eye"></i> View</button></td>
+        <td class="text-mono" data-label="#">#${t.number}</td>
+        <td data-label="Date &amp; Time">${t.dateLabel}<br><span style="color:#aaa;font-size:11.5px;">${t.timeLabel}</span></td>
+        <td data-label="Items">${historyItemsSummary(t)}</td>
+        <td data-label="Cashier">${escapeHtml(t.cashier)}</td>
+        <td data-label="Payment">${t.paymentLabel}</td>
+        <td data-label="Table #">${escapeHtml(t.tableNumber || '—')}</td>
+        <td class="text-mono text-gold" data-label="Total">${money(t.total)}</td>
+        <td data-label="Status"><span class="status-pill ${t.status === 'completed' ? 'pill-success' : 'pill-red'}">${t.statusLabel}</span></td>
+        <td data-label="Action"><button class="tbl-btn tbl-btn-edit" onclick="openTxnDetail(${t.id})"><i class="fas fa-eye"></i> View</button></td>
       </tr>
     `).join('');
   }
@@ -990,10 +1055,10 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
     document.getElementById('txn-detail-sub').innerHTML = `${t.dateLabel} · ${t.timeLabel} <span class="status-pill ${t.status === 'completed' ? 'pill-success' : 'pill-red'}" style="margin-left:6px;">${t.statusLabel}</span>`;
     document.getElementById('txn-detail-items').innerHTML = t.items.map(it => `
       <tr>
-        <td>${escapeHtml(itemLine(it))}${it.discountApplied === true ? ' <span class="txn-discount-tag">Discount applied</span>' : ''} <span class="tag ${historyCategoryTagClass(it.category)}" style="margin-left:4px;">${escapeHtml(it.category)}</span></td>
-        <td class="text-mono">${it.quantity}</td>
-        <td class="text-mono">${money(it.unitPrice)}</td>
-        <td class="text-mono">${money(it.subtotal)}</td>
+        <td data-label="Item">${escapeHtml(itemLine(it))}${it.discountApplied === true ? ' <span class="txn-discount-tag">Discount applied</span>' : ''} <span class="tag ${historyCategoryTagClass(it.category)}" style="margin-left:4px;">${escapeHtml(it.category)}</span></td>
+        <td class="text-mono" data-label="Qty">${it.quantity}</td>
+        <td class="text-mono" data-label="Unit Price">${money(it.unitPrice)}</td>
+        <td class="text-mono" data-label="Subtotal">${money(it.subtotal)}</td>
       </tr>
     `).join('');
     const subtotal = t.items.reduce((sum, it) => sum + it.subtotal, 0);
@@ -1185,6 +1250,32 @@ $initialHistory = build_history_result($conn, $todayStr, $todayStr, 0, 1, true, 
     c.appendChild(t);
     setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, 2800);
   }
+</script>
+<script>
+  (() => {
+    const toggle = document.querySelector('.mobile-menu-toggle');
+    const backdrop = document.getElementById('sidebar-backdrop');
+    const closeSidebar = () => {
+      document.body.classList.remove('sidebar-open');
+      toggle.setAttribute('aria-expanded', 'false');
+      toggle.setAttribute('aria-label', 'Open navigation');
+      toggle.innerHTML = '<i class="fas fa-bars" aria-hidden="true"></i>';
+    };
+    toggle.addEventListener('click', () => {
+      const isOpen = document.body.classList.toggle('sidebar-open');
+      toggle.setAttribute('aria-expanded', String(isOpen));
+      toggle.setAttribute('aria-label', isOpen ? 'Close navigation' : 'Open navigation');
+      toggle.innerHTML = `<i class="fas ${isOpen ? 'fa-xmark' : 'fa-bars'}" aria-hidden="true"></i>`;
+    });
+    backdrop.addEventListener('click', closeSidebar);
+    document.querySelectorAll('#sidebar .nav-item').forEach(link => link.addEventListener('click', closeSidebar));
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape') closeSidebar();
+    });
+    window.addEventListener('resize', () => {
+      if (window.innerWidth > 900) closeSidebar();
+    });
+  })();
 </script>
 </body>
 </html>

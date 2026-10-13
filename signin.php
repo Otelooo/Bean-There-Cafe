@@ -341,10 +341,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             margin-bottom: 10px;
         }
 
-        @media (max-width: 480px) {
+        @media (max-width: 640px) {
+            body {
+                align-items: flex-start;
+                padding: 24px 16px;
+            }
+
             .signin-container {
                 padding: 32px 24px;
-                margin: 10px;
+                margin: 0;
             }
 
             .brand-logo {
@@ -355,6 +360,51 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             .brand-name {
                 font-size: 20px;
+            }
+
+            .links-row {
+                flex-direction: column;
+                align-items: stretch;
+                gap: 12px;
+                text-align: center;
+            }
+
+            .links-row .link {
+                display: block;
+                padding: 4px 0;
+                overflow-wrap: anywhere;
+            }
+
+            .modal-overlay {
+                align-items: flex-start;
+                overflow-y: auto;
+                padding: 14px;
+            }
+
+            .modal-box {
+                max-height: calc(100vh - 28px);
+                max-height: calc(100svh - 28px);
+                overflow-y: auto;
+                overflow-wrap: anywhere;
+                margin: auto 0;
+                padding: 24px 22px;
+            }
+        }
+
+        @media (max-width: 380px) {
+            body { padding: 14px 10px; }
+
+            .signin-container {
+                padding: 26px 18px;
+            }
+
+            .form-input { padding: 13px 14px; }
+            .signin-btn { padding: 14px 12px; }
+            .modal-overlay { padding: 10px; }
+            .modal-box {
+                max-height: calc(100vh - 20px);
+                max-height: calc(100svh - 20px);
+                padding: 22px 18px;
             }
         }
     </style>

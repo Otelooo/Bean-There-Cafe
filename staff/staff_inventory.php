@@ -357,11 +357,62 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
       .pr-summary { margin-top:10px; font-size:10.5px; font-weight:600; }
       .pr-sign { display:flex; justify-content:space-between; margin-top:48px; font-size:10.5px; }
     }
+    .menu-toggle,.sidebar-backdrop{display:none}
+    @media(max-width:991.98px){
+      #main{margin-left:0}
+      #sidebar{display:flex;width:min(var(--sidebar-w),84vw);transform:translateX(-100%);transition:transform .25s ease;box-shadow:var(--shadow-lg)}
+      body.sidebar-open #sidebar{transform:translateX(0)}
+      .menu-toggle{display:inline-flex;width:40px;height:40px;align-items:center;justify-content:center;flex-shrink:0;border:1px solid rgba(255,255,255,.18);border-radius:8px;background:rgba(255,255,255,.07);color:var(--cream);font-size:18px;cursor:pointer}
+      .header-brand{width:auto;border:0;padding:0 14px}
+      #app-header{padding-left:12px}
+      .sidebar-backdrop{position:fixed;inset:var(--header-h) 0 0;z-index:850;background:rgba(20,10,8,.5)}
+      body.sidebar-open .sidebar-backdrop{display:block}
+    }
+    @media(max-width:767.98px){
+      :root{--header-h:58px}
+      #app-header{padding-right:12px}
+      .brand-logo{width:36px;height:36px;font-size:17px}
+      .brand-text .name{font-size:13px}
+      .brand-text .sub,.header-clock,.header-user-name{display:none}
+      .header-right{gap:8px}
+      .header-user{padding:4px}
+      .logout-link{padding:7px 10px;font-size:0}
+      .logout-link i{font-size:14px}
+      .page-strip{padding:13px 16px;align-items:flex-start;flex-direction:column}
+      .page-strip > div:last-child{width:100%;flex-direction:column}
+      .page-strip > div:last-child button{width:100%;justify-content:center;min-height:42px}
+      #main > div:nth-child(2){padding:16px!important}
+      .inv-toolbar{align-items:stretch}
+      .search-box,.filter-select{width:100%;min-height:42px}
+      .content-row .table-wrap{overflow:visible;background:transparent;border:0;box-shadow:none}
+      .data-table,.data-table tbody{display:block;width:100%}
+      .data-table thead{display:none}
+      .data-table tbody{display:grid;gap:12px}
+      .data-table tbody tr:not([data-card]){display:block;background:var(--cream);border-radius:12px;padding:12px}
+      .data-table tbody tr:not([data-card]) td{display:block;width:100%;text-align:center}
+      .data-table tbody tr[data-card]{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0 12px;padding:12px;background:var(--cream);border:1px solid var(--cream-dark);border-radius:12px;box-shadow:var(--shadow-sm)}
+      .data-table tbody tr[data-card] td{min-width:0;display:flex!important;align-items:flex-start;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--cream-dark);text-align:right;overflow-wrap:anywhere}
+      .data-table tbody tr[data-card] td::before{content:attr(data-label);flex:0 0 auto;color:#81736a;font-size:10px;font-weight:700;letter-spacing:.4px;text-align:left;text-transform:uppercase}
+      .data-table tbody tr[data-card] td:nth-child(2),.data-table tbody tr[data-card] td:nth-child(7),.data-table tbody tr[data-card] td:last-child{grid-column:1/-1}
+      .data-table tbody tr[data-card] td:nth-child(2){font-weight:700;color:var(--mocha-deep)}
+      .data-table tbody tr[data-card] td:last-child{border-bottom:0;justify-content:flex-start;flex-wrap:wrap}
+      .data-table tbody tr[data-card] td:last-child .tbl-btn{min-height:40px}
+      .legend-card{padding:14px}
+    }
+    @media(max-width:380px){
+      .header-brand{gap:8px;padding:0 8px}
+      #app-header{padding-left:8px}
+      .data-table tbody tr[data-card]{grid-template-columns:minmax(0,1fr)}
+      .data-table tbody tr[data-card] td:nth-child(2),.data-table tbody tr[data-card] td:nth-child(7),.data-table tbody tr[data-card] td:last-child{grid-column:1}
+    }
   </style>
 </head>
 <body>
 
 <header id="app-header">
+  <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Open navigation menu" aria-controls="sidebar" aria-expanded="false">
+    <i class="fas fa-bars" aria-hidden="true"></i>
+  </button>
   <div class="header-brand">
     <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
     <div class="brand-text"><div class="name">SmartStock</div><div class="sub">Bean There Café</div></div>
@@ -376,6 +427,7 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
   </div>
 </header>
 
+<div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
 <nav id="sidebar">
   <div class="sidebar-section-label">Staff Panel</div>
   <a href="staffdashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
@@ -561,6 +613,20 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
 <script id="ingredients-data" type="application/json"><?= json_encode($ingredients, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?></script>
 
 <script>
+  const menuToggle = document.getElementById('menu-toggle');
+  const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+  function setSidebarOpen(isOpen) {
+    document.body.classList.toggle('sidebar-open', isOpen);
+    menuToggle.setAttribute('aria-expanded', String(isOpen));
+    menuToggle.setAttribute('aria-label', isOpen ? 'Close navigation menu' : 'Open navigation menu');
+    menuToggle.innerHTML = `<i class="fas ${isOpen ? 'fa-xmark' : 'fa-bars'}" aria-hidden="true"></i>`;
+  }
+  menuToggle.addEventListener('click', () => setSidebarOpen(!document.body.classList.contains('sidebar-open')));
+  sidebarBackdrop.addEventListener('click', () => setSidebarOpen(false));
+  document.querySelectorAll('#sidebar a').forEach(link => link.addEventListener('click', () => setSidebarOpen(false)));
+  document.addEventListener('keydown', event => { if (event.key === 'Escape') setSidebarOpen(false); });
+  window.addEventListener('resize', () => { if (window.innerWidth >= 992) setSidebarOpen(false); });
+
   // Ingredient stock — loaded from the product_ingredients table (see ingredients-data script tag above)
   const ingredients = JSON.parse(document.getElementById('ingredients-data').textContent);
 
@@ -601,17 +667,17 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
     }
 
     tbody.innerHTML = filtered.map(i => `
-      <tr>
-        <td class="text-mono">${i.code || '<span class="text-muted">—</span>'}</td>
-        <td style="font-weight:600;">${i.name}</td>
-        <td><div class="stock-indicator stock-${i.level}"><div class="stock-dot"></div>${qty(i.stock)}</div></td>
-        <td class="text-mono">${i.unit_label}</td>
-        <td>${i.supplier ? i.supplier : '<span class="text-muted">—</span>'}</td>
-        <td class="text-mono" style="font-size:12px;">${i.contact ? i.contact : '<span class="text-muted">—</span>'}</td>
-        <td title="${i.restock_details}">${i.restock_details ? i.restock_details.slice(0, 55) + (i.restock_details.length > 55 ? '…' : '') : '<span class="text-muted">—</span>'}</td>
-        <td class="text-mono" style="font-size:11px;">${i.updated_at || '<span class="text-muted">—</span>'}</td>
-        <td><span class="status-pill ${i.level === 'ok' ? 'pill-success' : i.level === 'low' ? 'pill-warn' : 'pill-red'}">${levelLabels[i.level]}</span></td>
-        <td style="display:flex;gap:6px;align-items:center;">
+      <tr data-card>
+        <td data-label="Code" class="text-mono">${i.code || '<span class="text-muted">—</span>'}</td>
+        <td data-label="Ingredient" style="font-weight:600;">${i.name}</td>
+        <td data-label="Stock"><div class="stock-indicator stock-${i.level}"><div class="stock-dot"></div>${qty(i.stock)}</div></td>
+        <td data-label="Unit" class="text-mono">${i.unit_label}</td>
+        <td data-label="Supplier">${i.supplier ? i.supplier : '<span class="text-muted">—</span>'}</td>
+        <td data-label="Contact" class="text-mono" style="font-size:12px;">${i.contact ? i.contact : '<span class="text-muted">—</span>'}</td>
+        <td data-label="Last Restock" title="${i.restock_details}">${i.restock_details ? i.restock_details.slice(0, 55) + (i.restock_details.length > 55 ? '…' : '') : '<span class="text-muted">—</span>'}</td>
+        <td data-label="Last Updated" class="text-mono" style="font-size:11px;">${i.updated_at || '<span class="text-muted">—</span>'}</td>
+        <td data-label="Status"><span class="status-pill ${i.level === 'ok' ? 'pill-success' : i.level === 'low' ? 'pill-warn' : 'pill-red'}">${levelLabels[i.level]}</span></td>
+        <td data-label="Actions" style="display:flex;gap:6px;align-items:center;">
           <button class="tbl-btn tbl-btn-edit" onclick="openEditModal(${i.id})">Edit</button>
           <form method="POST" action="staff_inventory.php" style="display:contents;" onsubmit="return confirmDelete(event, 'Delete ${i.name.replace(/'/g, "\\'")}?')">
             <input type="hidden" name="action" value="delete">

@@ -359,11 +359,178 @@ $initials = strtoupper(substr($displayName, 0, 2));
       color: #aaa;
     }
     .empty-state i { font-size: 48px; color: #ccc; margin-bottom: 12px; }
+
+    .menu-toggle {
+      display: none;
+      width: 40px;
+      height: 40px;
+      border: 1px solid rgba(255,255,255,.18);
+      border-radius: 8px;
+      background: rgba(255,255,255,.07);
+      color: var(--cream);
+      font-size: 18px;
+      cursor: pointer;
+    }
+    .sidebar-backdrop { display: none; }
+
+    @media (max-width: 991.98px) {
+      #main { margin-left: 0; }
+      #sidebar {
+        width: min(var(--sidebar-w), 84vw);
+        transform: translateX(-100%);
+        transition: transform .25s ease;
+        box-shadow: var(--shadow-lg);
+      }
+      body.sidebar-open #sidebar { transform: translateX(0); }
+      .sidebar-backdrop {
+        position: fixed;
+        inset: var(--header-h) 0 0;
+        z-index: 850;
+        background: rgba(20,10,8,.5);
+      }
+      body.sidebar-open .sidebar-backdrop { display: block; }
+      .menu-toggle { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+      .header-brand { width: auto; border-right: 0; padding: 0 14px; }
+      #app-header { padding-left: 12px; }
+    }
+
+    @media (max-width: 767.98px) {
+      :root { --header-h: 58px; }
+      #app-header { padding-right: 12px; }
+      .brand-logo { width: 36px; height: 36px; font-size: 17px; }
+      .brand-text .name { font-size: 13px; }
+      .brand-text .sub { font-size: 8px; letter-spacing: 1px; }
+      .header-right { gap: 8px; }
+      .header-clock, .header-user-name { display: none; }
+      .header-user { padding: 4px; }
+      .logout-link { padding: 7px 10px; font-size: 0; }
+      .logout-link i { font-size: 14px; }
+      .page-strip { padding: 13px 16px; }
+      .page-strip h1 { font-size: 19px; }
+      .page-strip h1 i { font-size: 18px !important; }
+      #main > div:nth-child(2) { padding: 16px !important; }
+      .queue-toolbar, .queue-toolbar-group { width: 100%; }
+      .queue-toolbar { align-items: stretch !important; }
+      .queue-toolbar-group { flex-wrap: wrap; }
+      .queue-actions { flex-direction: column; align-items: stretch !important; }
+      .queue-actions > * { width: 100%; }
+      .queue-actions .filter-select { min-height: 42px; }
+      #bulk-remove-btn { min-height: 42px; }
+      .queue-status-legend { flex-wrap: wrap; }
+
+      .table-wrap {
+        overflow: visible;
+        background: transparent;
+        border: 0;
+        box-shadow: none;
+      }
+      .data-table, .data-table tbody { display: block; width: 100%; }
+      .data-table thead { display: none; }
+      .data-table tbody { display: grid; gap: 12px; }
+      .data-table tbody tr:not([data-txn-id]) { display: block; }
+      .data-table tbody tr:not([data-txn-id]) td { display: block; width: 100%; }
+      .data-table tbody tr[data-txn-id] {
+        position: relative;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 0 14px;
+        padding: 14px;
+        background: var(--cream);
+        border: 1.5px solid var(--cream-dark);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow-sm);
+      }
+      .data-table tbody tr[data-txn-id] td {
+        min-width: 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 9px 0;
+        border-bottom: 1px solid var(--cream-dark);
+        text-align: right;
+        overflow-wrap: anywhere;
+      }
+      .data-table tbody tr[data-txn-id] td::before {
+        content: attr(data-label);
+        flex: 0 0 auto;
+        color: #81736a;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: .5px;
+        text-align: left;
+        text-transform: uppercase;
+      }
+      .data-table tbody tr[data-txn-id] td.col-check {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        width: auto;
+        padding: 0;
+        border: 0;
+      }
+      .data-table tbody tr[data-txn-id] td.col-check::before { content: none; }
+      .data-table tbody tr[data-txn-id] td:nth-child(2) {
+        grid-column: 1 / -1;
+        justify-content: flex-start;
+        padding: 2px 34px 11px 0;
+        color: var(--mocha-deep);
+        font-size: 16px;
+        font-weight: 700;
+        text-align: left;
+        border-bottom: 1px solid var(--cream-dark);
+      }
+      .data-table tbody tr[data-txn-id] td:nth-child(2)::before { content: "Order"; }
+      .data-table tbody tr[data-txn-id] td:nth-child(4) {
+        grid-column: 1 / -1;
+        display: block;
+        text-align: left;
+      }
+      .data-table tbody tr[data-txn-id] td:nth-child(4)::before {
+        display: block;
+        margin-bottom: 5px;
+      }
+      .data-table tbody tr[data-txn-id] td:nth-child(4) > div { max-width: none !important; }
+      .data-table tbody tr[data-txn-id] td:nth-child(7) {
+        color: var(--mocha-deep);
+        font-weight: 700;
+      }
+      .data-table tbody tr[data-txn-id] td:nth-child(8) select { max-width: 100%; }
+      .data-table tbody tr[data-txn-id] td:nth-child(8) select { min-height: 40px; }
+      .data-table tbody tr[data-txn-id] .order-check { width: 20px; height: 20px; }
+      .data-table tbody tr[data-txn-id] td:last-child {
+        grid-column: 1 / -1;
+        border-bottom: 0;
+        padding-bottom: 0;
+      }
+      .data-table tbody tr[data-txn-id] td:last-child::before { content: none; }
+      .data-table tbody tr[data-txn-id] td:last-child .tbl-btn { min-height: 40px; width: 100%; }
+      .empty-state { background: var(--cream); border-radius: var(--radius); padding: 36px 18px; }
+      #toast-container { left: 12px; right: 12px; bottom: 12px; }
+      .toast-msg { width: 100%; }
+      .modal-box { padding: 22px 18px; max-height: 92vh; }
+      .rec-table { min-width: 460px; }
+      #order-detail-modal .modal-box { overflow-x: auto; }
+    }
+
+    @media (max-width: 380px) {
+      .brand-text .sub { display: none; }
+      .header-brand { gap: 8px; padding: 0 8px; }
+      #app-header { padding-left: 8px; }
+      .logout-link { padding: 7px 8px; }
+      .data-table tbody tr[data-txn-id] { grid-template-columns: minmax(0, 1fr); }
+      .data-table tbody tr[data-txn-id] td:nth-child(2),
+      .data-table tbody tr[data-txn-id] td:nth-child(4),
+      .data-table tbody tr[data-txn-id] td:last-child { grid-column: 1; }
+    }
   </style>
 </head>
 <body>
 
 <header id="app-header">
+  <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Open navigation menu" aria-controls="sidebar" aria-expanded="false">
+    <i class="fas fa-bars" aria-hidden="true"></i>
+  </button>
   <div class="header-brand">
     <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
     <div class="brand-text"><div class="name">SmartStock</div><div class="sub">Bean There Café</div></div>
@@ -379,6 +546,7 @@ $initials = strtoupper(substr($displayName, 0, 2));
   </div>
 </header>
 
+<div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
 <nav id="sidebar">
   <div class="sidebar-section-label">Owner Panel</div>
   <a href="dashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
@@ -412,13 +580,13 @@ $initials = strtoupper(substr($displayName, 0, 2));
   </div>
   <div style="padding:22px 26px;">
 
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
-      <div style="display:flex; gap:8px; align-items:center;">
+    <div class="queue-toolbar" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
+      <div class="queue-toolbar-group queue-status-legend" style="display:flex; gap:8px; align-items:center;">
         <div class="status-pill pill-pending" style="font-size:12px; padding:5px 14px;"><i class="fas fa-hourglass-half" style="margin-right:5px;"></i>Pending</div>
         <div class="status-pill pill-success" style="font-size:12px; padding:5px 14px;"><i class="fas fa-check-circle" style="margin-right:5px;"></i>Done</div>
         <div class="status-pill pill-red" style="font-size:12px; padding:5px 14px;"><i class="fas fa-ban" style="margin-right:5px;"></i>Cancelled</div>
       </div>
-      <div style="display:flex; gap:10px; align-items:center;">
+      <div class="queue-toolbar-group queue-actions" style="display:flex; gap:10px; align-items:center;">
         <button type="button" id="bulk-remove-btn" style="display:none; padding:8px 16px; border-radius:8px; border:none; background:var(--red-soft); color:#fff; font-family:var(--font-body); font-size:13px; font-weight:600; cursor:pointer; transition:all .2s; box-shadow:0 2px 8px rgba(192,57,43,.25);" onclick="confirmBulkRemove()">
           <i class="fas fa-trash" style="margin-right:6px;"></i>Remove Selected (<span id="bulk-count">0</span>)
         </button>
@@ -464,26 +632,26 @@ $initials = strtoupper(substr($displayName, 0, 2));
                 }
               ?>
               <tr data-status="<?= htmlspecialchars($order['order_status']) ?>" data-txn-id="<?= $tid ?>">
-                <td class="col-check"><input type="checkbox" class="order-check order-checkbox" value="<?= $tid ?>" title="Select order #<?= (int)$order['daily_transaction_number'] ?>" onchange="updateBulkRemoveState()"></td>
-                <td class="text-mono">#<?= (int)$order['daily_transaction_number'] ?></td>
-                <td>
+                <td class="col-check"><input type="checkbox" class="order-check order-checkbox" value="<?= $tid ?>" title="Select order #<?= (int)$order['daily_transaction_number'] ?>" aria-label="Select order #<?= (int)$order['daily_transaction_number'] ?>" onchange="updateBulkRemoveState()"></td>
+                <td class="text-mono" data-label="Order">#<?= (int)$order['daily_transaction_number'] ?></td>
+                <td data-label="Date &amp; Time">
                   <div style="font-weight:600;"><?= $dt->format('M j, Y') ?></div>
                   <div style="font-size:11px;color:#999;"><?= $dt->format('g:i A') ?></div>
                 </td>
-                <td style="max-width:280px;">
+                <td data-label="Items" style="max-width:280px;">
                   <div style="font-size:12px;line-height:1.6;color:var(--charcoal-mid);"><?= htmlspecialchars(implode(', ', $itemsSummary)) ?></div>
                 </td>
-                <td><span class="status-pill" style="background:rgba(74,44,42,.08);color:var(--mocha);"><?= $orderTypeLabel ?></span></td>
-                <td><?= $order['table_number'] ? 'Table ' . (int)$order['table_number'] : '—' ?></td>
-                <td class="text-mono" style="font-weight:700;color:var(--mocha-deep);">₱<?= number_format((float)$order['transaction_total'], 2) ?></td>
-                <td>
+                <td data-label="Order Type"><span class="status-pill" style="background:rgba(74,44,42,.08);color:var(--mocha);"><?= $orderTypeLabel ?></span></td>
+                <td data-label="Table"><?= $order['table_number'] ? 'Table ' . (int)$order['table_number'] : '—' ?></td>
+                <td data-label="Total" class="text-mono" style="font-weight:700;color:var(--mocha-deep);">₱<?= number_format((float)$order['transaction_total'], 2) ?></td>
+                <td data-label="Order Status">
                   <select class="order-status-select status-<?= htmlspecialchars($order['order_status']) ?>" data-txn-id="<?= $tid ?>" onchange="updateOrderStatus(this)">
                     <option value="pending" <?= $order['order_status'] === 'pending' ? 'selected' : '' ?>>Pending</option>
                     <option value="done" <?= $order['order_status'] === 'done' ? 'selected' : '' ?>>Done</option>
                     <option value="cancelled" <?= $order['order_status'] === 'cancelled' ? 'selected' : '' ?>>Cancelled</option>
                   </select>
                 </td>
-                <td>
+                <td data-label="Action">
                   <button class="tbl-btn tbl-btn-remove" onclick="confirmRemoveOrder(<?= $tid ?>)"><i class="fas fa-trash" style="margin-right:4px;"></i>Remove</button>
                 </td>
               </tr>
@@ -554,6 +722,30 @@ $initials = strtoupper(substr($displayName, 0, 2));
 <script>
   // Order data embedded for the detail modal
   const ordersData = <?= json_encode(array_values($orders), JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>;
+
+  const menuToggle = document.getElementById('menu-toggle');
+  const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+
+  function setSidebarOpen(isOpen) {
+    document.body.classList.toggle('sidebar-open', isOpen);
+    menuToggle.setAttribute('aria-expanded', String(isOpen));
+    menuToggle.setAttribute('aria-label', isOpen ? 'Close navigation menu' : 'Open navigation menu');
+    menuToggle.innerHTML = `<i class="fas ${isOpen ? 'fa-xmark' : 'fa-bars'}" aria-hidden="true"></i>`;
+  }
+
+  menuToggle.addEventListener('click', () => {
+    setSidebarOpen(!document.body.classList.contains('sidebar-open'));
+  });
+  sidebarBackdrop.addEventListener('click', () => setSidebarOpen(false));
+  document.querySelectorAll('#sidebar a').forEach(link => {
+    link.addEventListener('click', () => setSidebarOpen(false));
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') setSidebarOpen(false);
+  });
+  window.addEventListener('resize', () => {
+    if (window.innerWidth >= 992) setSidebarOpen(false);
+  });
 
   function getDailyTransactionNumber(transactionId) {
     const order = ordersData.find(item => Number(item.transaction_id) === Number(transactionId));

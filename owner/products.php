@@ -845,11 +845,74 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
     .btn-modal-primary:hover { background:var(--mocha-mid); }
     .btn-modal-cancel { width:100%; padding:9px; margin-top:7px; background:transparent; color:#bbb; border:1.5px solid var(--cream-dark); border-radius:8px; font-family:var(--font-body); font-size:13px; cursor:pointer; transition:all .2s; }
     .btn-modal-cancel:hover { color:var(--red-soft); border-color:var(--red-soft); }
+
+    .menu-toggle {
+      display:none; width:40px; height:40px; align-items:center; justify-content:center;
+      border:1px solid rgba(255,255,255,.18); border-radius:8px;
+      background:rgba(255,255,255,.07); color:var(--cream); font-size:18px; cursor:pointer;
+    }
+    .sidebar-backdrop { display:none; }
+    @media (max-width:991.98px) {
+      #main { margin-left:0; }
+      #sidebar { width:min(var(--sidebar-w), 84vw); transform:translateX(-100%); transition:transform .25s ease; box-shadow:var(--shadow-lg); }
+      body.sidebar-open #sidebar { transform:translateX(0); }
+      .sidebar-backdrop { position:fixed; inset:var(--header-h) 0 0; z-index:850; background:rgba(20,10,8,.5); }
+      body.sidebar-open .sidebar-backdrop { display:block; }
+      .menu-toggle { display:inline-flex; flex-shrink:0; }
+      .header-brand { width:auto; border-right:0; padding:0 14px; }
+      #app-header { padding-left:12px; }
+    }
+    @media (max-width:767.98px) {
+      :root { --header-h:58px; }
+      #app-header { padding-right:12px; }
+      .brand-logo { width:36px; height:36px; font-size:17px; }
+      .brand-text .name { font-size:13px; }
+      .brand-text .sub { font-size:8px; letter-spacing:1px; }
+      .header-right { gap:8px; }
+      .header-clock, .header-user-name { display:none; }
+      .header-user { padding:4px; }
+      .logout-link { padding:7px 10px; font-size:0; }
+      .logout-link i { font-size:14px; }
+      .page-strip { align-items:flex-start; flex-direction:column; gap:12px; padding:13px 16px; }
+      .page-strip > div:last-child { width:100%; flex-direction:column; }
+      .page-strip > div:last-child > button { width:100%; justify-content:center; min-height:42px; }
+      #main > div:nth-child(2) { padding:16px !important; }
+      .product-toolbar { align-items:stretch; flex-direction:column; }
+      .search-box { min-width:0; width:100%; }
+      .product-toolbar .filter-select { width:100%; min-height:42px; }
+      .content-row { flex-direction:column; }
+      .content-row .table-wrap, .legend-card { width:100%; }
+      .table-wrap { overflow:visible; background:transparent; border:0; box-shadow:none; }
+      .data-table, .data-table tbody { display:block; width:100%; }
+      .data-table thead { display:none; }
+      .data-table tbody { display:grid; gap:12px; }
+      .data-table tbody tr:not([data-mobile-card]) { display:block; background:var(--cream); border:1.5px solid var(--cream-dark); border-radius:var(--radius); }
+      .data-table tbody tr[data-mobile-card] { display:grid; grid-template-columns:minmax(0,1fr); padding:12px 14px; background:var(--cream); border:1.5px solid var(--cream-dark); border-radius:var(--radius); box-shadow:var(--shadow-sm); }
+      .data-table tbody tr[data-mobile-card] td { min-width:0; display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:9px 0; border-bottom:1px solid var(--cream-dark); overflow-wrap:anywhere; }
+      .data-table tbody tr[data-mobile-card] td::before { content:attr(data-label); flex:0 0 auto; color:#81736a; font-size:10px; font-weight:700; letter-spacing:.5px; text-align:left; text-transform:uppercase; }
+      .data-table tbody tr[data-mobile-card] td:last-child { border-bottom:0; }
+      .data-table tbody tr[data-mobile-card] td:last-child::before { content:"Actions"; }
+      .data-table tbody tr[data-mobile-card] td:last-child { display:flex !important; flex-wrap:wrap; justify-content:flex-start; gap:6px; }
+      .data-table tbody tr[data-mobile-card] td:last-child button { min-height:38px; }
+      .data-table tbody tr[data-mobile-card] td:first-child { align-items:center; }
+      #toast-container { left:12px; right:12px; bottom:12px; }
+      .toast-msg { width:100%; }
+      .modal-box { padding:22px 18px; max-height:92vh; }
+    }
+    @media (max-width:380px) {
+      .brand-text .sub { display:none; }
+      .header-brand { gap:8px; padding:0 8px; }
+      #app-header { padding-left:8px; }
+      .logout-link { padding:7px 8px; }
+    }
   </style>
 </head>
 <body data-reopen-recipe="<?= $reopenRecipeProductId ?>" data-reopen-sizes="<?= $reopenSizesProductId ?>">
 
 <header id="app-header">
+  <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Open navigation menu" aria-controls="sidebar" aria-expanded="false">
+    <i class="fas fa-bars" aria-hidden="true"></i>
+  </button>
   <div class="header-brand">
     <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
     <div class="brand-text"><div class="name">SmartStock</div><div class="sub">Bean There Café</div></div>
@@ -865,6 +928,7 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
   </div>
 </header>
 
+<div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
 <nav id="sidebar">
   <div class="sidebar-section-label">Owner Panel</div>
   <a href="dashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
@@ -1322,13 +1386,13 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
     tbody.innerHTML = filtered.map(p => {
       const isMotd = p.type === 'made_to_order';
       return `
-      <tr>
-        <td>${p.image ? `<img src="${p.image}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:6px;">` : `<div style="width:40px;height:40px;border-radius:6px;background:var(--cream-dark);"></div>`}</td>
-        <td style="font-weight:600;">${p.name}${isMotd ? ' <span class="tag tag-supply" style="margin-left:4px;">Made to Order</span>' : ''}</td>
-        <td><span class="tag ${p.tag_class}">${p.category_name}</span></td>
-        <td>${isMotd ? '<span class="text-muted">—</span>' : `<div class="stock-indicator stock-${p.level}"><div class="stock-dot"></div>${p.stock}</div>`}</td>
-        <td class="text-mono">${money(p.price)}</td>
-        <td style="display:flex;gap:6px;align-items:center;">
+      <tr data-mobile-card>
+        <td data-label="Image">${p.image ? `<img src="${p.image}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:6px;">` : `<div style="width:40px;height:40px;border-radius:6px;background:var(--cream-dark);"></div>`}</td>
+        <td data-label="Product" style="font-weight:600;">${p.name}${isMotd ? ' <span class="tag tag-supply" style="margin-left:4px;">Made to Order</span>' : ''}</td>
+        <td data-label="Category"><span class="tag ${p.tag_class}">${p.category_name}</span></td>
+        <td data-label="Stock">${isMotd ? '<span class="text-muted">—</span>' : `<div class="stock-indicator stock-${p.level}"><div class="stock-dot"></div>${p.stock}</div>`}</td>
+        <td data-label="Selling Price" class="text-mono">${money(p.price)}</td>
+        <td data-label="Actions" style="display:flex;gap:6px;align-items:center;">
           <button class="tbl-btn tbl-btn-edit" onclick="openEditModal(${p.id})">Edit</button>
           ${isMotd ? `<button class="tbl-btn tbl-btn-edit" onclick="openRecipeModal(${p.id})">Recipe</button>` : ''}
           <button class="tbl-btn tbl-btn-edit" onclick="openSizesModal(${p.id})">Sizes${p.variants.length > 0 ? ` (${p.variants.length})` : ''}</button>
@@ -1578,6 +1642,19 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
     c.appendChild(t);
     setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, 2800);
   }
+
+  const menuToggle = document.getElementById('menu-toggle');
+  const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+  function setSidebarOpen(open) {
+    document.body.classList.toggle('sidebar-open', open);
+    menuToggle.setAttribute('aria-expanded', String(open));
+    menuToggle.setAttribute('aria-label', open ? 'Close navigation menu' : 'Open navigation menu');
+    menuToggle.innerHTML = `<i class="fas fa-${open ? 'xmark' : 'bars'}" aria-hidden="true"></i>`;
+  }
+  menuToggle.addEventListener('click', () => setSidebarOpen(!document.body.classList.contains('sidebar-open')));
+  sidebarBackdrop.addEventListener('click', () => setSidebarOpen(false));
+  document.querySelectorAll('#sidebar .nav-item').forEach(link => link.addEventListener('click', () => setSidebarOpen(false)));
+  document.addEventListener('keydown', event => { if (event.key === 'Escape') setSidebarOpen(false); });
 </script>
 </body>
 </html>

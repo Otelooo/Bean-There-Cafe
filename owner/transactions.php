@@ -1743,12 +1743,85 @@ while ($row = $prodResult->fetch_assoc()) {
         padding-bottom: 110px;
       }
     }
+
+    .mobile-menu-toggle {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      flex: 0 0 40px;
+      border: 1px solid rgba(255, 255, 255, .16);
+      border-radius: 9px;
+      background: rgba(255, 255, 255, .07);
+      color: var(--cream);
+      font-size: 18px;
+      cursor: pointer;
+    }
+
+    #sidebar-backdrop { display: none; }
+
+    @media (max-width: 900px) {
+      #sidebar { transform: translateX(-100%); visibility: hidden; transition: transform .22s ease, visibility .22s ease; }
+      body.sidebar-open #sidebar { transform: translateX(0); visibility: visible; }
+      body.sidebar-open { overflow: hidden; }
+      #sidebar-backdrop {
+        display: block;
+        position: fixed;
+        inset: var(--header-h) 0 0;
+        z-index: 850;
+        background: rgba(20, 10, 8, .48);
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity .22s ease, visibility .22s ease;
+      }
+      body.sidebar-open #sidebar-backdrop { opacity: 1; visibility: visible; }
+      .mobile-menu-toggle { display: inline-flex; }
+      .header-brand { width: auto; padding: 0 12px; border-right: 0; }
+      .header-center { display: none; }
+      #main { margin-left: 0; }
+      .page-strip { padding: 14px 18px; }
+      .pos-content { padding: 16px !important; }
+      .pos-main { padding: 12px; padding-bottom: 100px; }
+      .menu-toolbar { align-items: stretch; flex-direction: column; gap: 12px; }
+      .menu-toolbar .product-search-wrap { width: 100%; }
+      .category-tabs { flex-wrap: nowrap; overflow-x: auto; padding: 2px 0 8px; }
+      .cat-tab { flex: 0 0 auto; }
+      .products-grid { grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); gap: 12px; }
+      .header-right { gap: 8px; }
+    }
+
+    @media (max-width: 600px) {
+      #app-header { padding-right: 10px; }
+      .header-brand { gap: 8px; padding: 0 8px; }
+      .brand-logo { width: 36px; height: 36px; font-size: 17px; }
+      .brand-text .name { font-size: 13px; }
+      .brand-text .sub { font-size: 8px; letter-spacing: 1px; }
+      .header-clock, .header-user-name { display: none; }
+      .header-user { padding: 4px; }
+      .logout-link { padding: 7px 9px; font-size: 0; }
+      .logout-link i { font-size: 14px; }
+      .page-strip { align-items: flex-start; padding: 12px 14px; }
+      .page-strip h1 { font-size: 18px; }
+      .pos-content { padding: 10px !important; }
+      .pos-main { padding: 8px; }
+      .products-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+      .product-btn { padding: 15px 8px; }
+    }
+
+    @media (max-width: 380px) {
+      .brand-text { display: none; }
+      .header-right { gap: 5px; }
+    }
   </style>
 </head>
 
 <body>
   <!-- POS CONTENT -->
   <header id="app-header">
+    <button class="mobile-menu-toggle" type="button" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false">
+      <i class="fas fa-bars" aria-hidden="true"></i>
+    </button>
     <div class="header-brand">
       <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
       <div class="brand-text">
@@ -1791,6 +1864,7 @@ while ($row = $prodResult->fetch_assoc()) {
       <p>SmartStock v1.0<br />Bean There Café<br />ISO/IEC 25010 Compliant</p>
     </div>
   </nav>
+  <div id="sidebar-backdrop" aria-hidden="true"></div>
 
   <div id="main">
     <div class="page-strip">
@@ -1800,7 +1874,7 @@ while ($row = $prodResult->fetch_assoc()) {
         <div class="sub" id="pos-date">Live Sales System</div>
       </div>
     </div>
-    <div style="padding:22px 26px;">
+    <div class="pos-content" style="padding:22px 26px;">
       <main class="pos-main">
         <section>
           <div class="menu-toolbar">
@@ -2843,6 +2917,32 @@ while ($row = $prodResult->fetch_assoc()) {
           setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, 2800);
         }
       </script>
+  <script>
+    (() => {
+      const toggle = document.querySelector('.mobile-menu-toggle');
+      const backdrop = document.getElementById('sidebar-backdrop');
+      const closeSidebar = () => {
+        document.body.classList.remove('sidebar-open');
+        toggle.setAttribute('aria-expanded', 'false');
+        toggle.setAttribute('aria-label', 'Open navigation');
+        toggle.innerHTML = '<i class="fas fa-bars" aria-hidden="true"></i>';
+      };
+      toggle.addEventListener('click', () => {
+        const isOpen = document.body.classList.toggle('sidebar-open');
+        toggle.setAttribute('aria-expanded', String(isOpen));
+        toggle.setAttribute('aria-label', isOpen ? 'Close navigation' : 'Open navigation');
+        toggle.innerHTML = `<i class="fas ${isOpen ? 'fa-xmark' : 'fa-bars'}" aria-hidden="true"></i>`;
+      });
+      backdrop.addEventListener('click', closeSidebar);
+      document.querySelectorAll('#sidebar .nav-item').forEach(link => link.addEventListener('click', closeSidebar));
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') closeSidebar();
+      });
+      window.addEventListener('resize', () => {
+        if (window.innerWidth > 900) closeSidebar();
+      });
+    })();
+  </script>
 </body>
 
 </html>

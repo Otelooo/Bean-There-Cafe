@@ -1266,12 +1266,60 @@ if ($maxMonthlyTotal <= 0) {
       color: var(--red-soft);
       border-color: var(--red-soft);
     }
+
+    .menu-toggle, .sidebar-backdrop { display: none; }
+    @media (max-width: 991.98px) {
+      #main { margin-left: 0; }
+      #sidebar { width: min(var(--sidebar-w), 84vw); transform: translateX(-100%); transition: transform .25s ease; box-shadow: var(--shadow-lg); }
+      body.sidebar-open #sidebar { transform: translateX(0); }
+      .menu-toggle { display: inline-flex; width: 40px; height: 40px; align-items: center; justify-content: center; flex-shrink: 0; border: 1px solid rgba(255,255,255,.18); border-radius: 8px; background: rgba(255,255,255,.07); color: var(--cream); font-size: 18px; cursor: pointer; }
+      .header-brand { width: auto; border-right: 0; padding: 0 14px; }
+      #app-header { padding-left: 12px; }
+      .sidebar-backdrop { position: fixed; inset: var(--header-h) 0 0; z-index: 850; background: rgba(20,10,8,.5); }
+      body.sidebar-open .sidebar-backdrop { display: block; }
+    }
+    @media (max-width: 767.98px) {
+      :root { --header-h: 58px; }
+      #app-header { padding-right: 12px; }
+      .brand-logo { width: 36px; height: 36px; font-size: 17px; }
+      .brand-text .name { font-size: 13px; }
+      .brand-text .sub, .header-clock, .header-user-name { display: none; }
+      .header-right { gap: 8px; }
+      .header-user { padding: 4px; }
+      .logout-link { padding: 7px 10px; font-size: 0; }
+      .logout-link i { font-size: 14px; }
+      .page-strip { padding: 13px 16px; gap: 10px; }
+      .page-strip h1 { font-size: 19px; }
+      #main > div:nth-child(2) { padding: 16px !important; }
+      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .period-tabs { flex-wrap: wrap; }
+      .table-wrap { overflow: visible; background: transparent; border: 0; box-shadow: none; }
+      .data-table, .data-table tbody, .rec-table, .rec-table tbody { display: block; width: 100%; }
+      .data-table thead, .rec-table thead { display: none; }
+      .data-table tbody, .rec-table tbody { display: grid; gap: 12px; }
+      .data-table tbody tr, .rec-table tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 12px; padding: 12px; background: var(--cream); border: 1px solid var(--cream-dark); border-radius: var(--radius); }
+      .data-table tbody td, .rec-table tbody td { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--cream-dark); overflow-wrap: anywhere; }
+      .data-table tbody td::before, .rec-table tbody td::before { content: attr(data-label); color: #81736a; font-size: 10px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; }
+      .data-table tbody td:nth-child(2), .rec-table tbody td:nth-child(2) { grid-column: 1 / -1; }
+      .data-table tbody td:last-child, .rec-table tbody td:last-child { border-bottom: 0; }
+      .dash-card { min-width: 0; padding: 16px; }
+    }
+    @media (max-width: 380px) {
+      .header-brand { gap: 8px; padding: 0 8px; }
+      #app-header { padding-left: 8px; }
+      .kpi-grid { grid-template-columns: 1fr; }
+      .data-table tbody tr, .rec-table tbody tr { grid-template-columns: minmax(0, 1fr); }
+      .data-table tbody td:nth-child(2), .rec-table tbody td:nth-child(2) { grid-column: 1; }
+    }
   </style>
 </head>
 
 <body>
 
   <header id="app-header">
+    <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Open navigation menu" aria-controls="sidebar" aria-expanded="false">
+      <i class="fas fa-bars" aria-hidden="true"></i>
+    </button>
     <div class="header-brand">
       <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
       <div class="brand-text">
@@ -1291,6 +1339,7 @@ if ($maxMonthlyTotal <= 0) {
     </div>
   </header>
 
+  <div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
   <nav id="sidebar">
     <div class="sidebar-section-label">Owner Panel</div>
     <a href="dashboard.php" class="nav-item active"><i class="fas fa-chart-line"></i> Dashboard</a>
@@ -1445,12 +1494,12 @@ if ($maxMonthlyTotal <= 0) {
                     $methodLabel = $tx['payment_method'] === 'online' ? 'Online' : 'Cash';
                   ?>
                   <tr>
-                    <td class="text-mono">#<?= (int)$tx['daily_transaction_number'] ?></td>
-                    <td><?= htmlspecialchars($tx['items_summary'] ?? '—') ?></td>
-                    <td class="text-mono text-gold">₱<?= number_format((float)$tx['transaction_total'], 2) ?></td>
-                    <td><?= $methodLabel ?></td>
-                    <td><?= htmlspecialchars($tx['username']) ?></td>
-                    <td><span class="status-pill <?= $statusPillClass ?>"><?= $statusLabel ?></span></td>
+                    <td class="text-mono" data-label="Order">#<?= (int)$tx['daily_transaction_number'] ?></td>
+                    <td data-label="Items"><?= htmlspecialchars($tx['items_summary'] ?? '—') ?></td>
+                    <td class="text-mono text-gold" data-label="Amount">₱<?= number_format((float)$tx['transaction_total'], 2) ?></td>
+                    <td data-label="Method"><?= $methodLabel ?></td>
+                    <td data-label="Staff"><?= htmlspecialchars($tx['username']) ?></td>
+                    <td data-label="Status"><span class="status-pill <?= $statusPillClass ?>"><?= $statusLabel ?></span></td>
                   </tr>
                 <?php endforeach; ?>
               <?php endif; ?>
@@ -1492,6 +1541,20 @@ if ($maxMonthlyTotal <= 0) {
   <script>
     document.addEventListener('DOMContentLoaded', () => {
       updateClock(); setInterval(updateClock, 1000);
+
+      const menuToggle = document.getElementById('menu-toggle');
+      const backdrop = document.getElementById('sidebar-backdrop');
+      const setSidebarOpen = isOpen => {
+        document.body.classList.toggle('sidebar-open', isOpen);
+        menuToggle.setAttribute('aria-expanded', String(isOpen));
+        menuToggle.setAttribute('aria-label', isOpen ? 'Close navigation menu' : 'Open navigation menu');
+        menuToggle.innerHTML = `<i class="fas ${isOpen ? 'fa-xmark' : 'fa-bars'}" aria-hidden="true"></i>`;
+      };
+      menuToggle.addEventListener('click', () => setSidebarOpen(!document.body.classList.contains('sidebar-open')));
+      backdrop.addEventListener('click', () => setSidebarOpen(false));
+      document.querySelectorAll('#sidebar a').forEach(link => link.addEventListener('click', () => setSidebarOpen(false)));
+      document.addEventListener('keydown', event => { if (event.key === 'Escape') setSidebarOpen(false); });
+      window.addEventListener('resize', () => { if (window.innerWidth >= 992) setSidebarOpen(false); });
 
       const dashDate = document.getElementById('dash-date');
       if (dashDate) dashDate.textContent = 'Overview — ' + new Date().toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });

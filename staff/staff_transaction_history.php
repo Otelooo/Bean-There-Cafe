@@ -540,11 +540,113 @@ $initialHistory = build_history_result($conn, $staffUserId, $todayStr, $todayStr
     .txn-summary-row { display:flex; justify-content:space-between; font-size:13px; padding:5px 0; }
     .txn-summary-row.total { font-weight:700; font-size:15px; color:var(--mocha-deep); border-top:1.5px solid var(--cream-dark); margin-top:6px; padding-top:10px; }
     .txn-summary-row.discount { color:var(--red-soft); }
+
+    .mobile-menu-toggle,
+    .sidebar-backdrop { display: none; }
+
+    @media (max-width: 900px) {
+      #app-header { padding: 0 12px; }
+      .mobile-menu-toggle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 40px;
+        height: 40px;
+        margin-right: 10px;
+        border: 1px solid rgba(245,236,215,.22);
+        border-radius: 8px;
+        background: transparent;
+        color: var(--cream);
+        font-size: 18px;
+        cursor: pointer;
+        flex: 0 0 auto;
+      }
+      .mobile-menu-toggle:focus-visible,
+      .sidebar-backdrop:focus-visible { outline: 3px solid var(--gold-light); outline-offset: 2px; }
+      .header-brand { width: auto; padding: 0 10px 0 0; border-right: 0; gap: 8px; }
+      .brand-logo { width: 36px; height: 36px; font-size: 17px; }
+      .header-center { display: none; }
+      #sidebar {
+        width: min(82vw, 300px);
+        transform: translateX(-105%);
+        transition: transform .22s ease;
+        box-shadow: var(--shadow-lg);
+      }
+      body.sidebar-open #sidebar { transform: translateX(0); }
+      .sidebar-backdrop {
+        position: fixed;
+        inset: var(--header-h) 0 0;
+        z-index: 850;
+        border: 0;
+        background: rgba(20,10,8,.48);
+      }
+      .sidebar-backdrop:not([hidden]) { display: block; }
+      #main { margin-left: 0; }
+      .page-strip { padding: 14px 18px; }
+      .history-toolbar { flex-wrap: wrap !important; overflow: visible !important; align-items: stretch !important; }
+      .history-toolbar-controls { flex-wrap: wrap !important; width: 100%; }
+      .history-toolbar .period-tabs { width: 100%; }
+      .history-toolbar .period-tab { flex: 1; padding-left: 8px; padding-right: 8px; }
+      .history-toolbar .time-filter-wrapper { max-width: 100%; flex-wrap: wrap; height: auto; min-height: 38px; }
+      .history-toolbar .filter-select,
+      .history-toolbar #export-history-btn { flex: 1 1 100%; justify-content: center; }
+      .history-toolbar input[type="date"] { min-width: 0; width: auto; flex: 1; }
+    }
+
+    @media (max-width: 640px) {
+      .header-clock { display: none; }
+      .header-user { padding-right: 5px; }
+      .header-user-name { display: none; }
+      .logout-link { padding: 7px 9px; font-size: 0; }
+      .logout-link i { font-size: 14px; }
+      .page-strip { position: static; padding: 14px 16px; }
+      #main > div[style*="padding:22px 26px"] { padding: 16px !important; }
+      .history-toolbar { gap: 10px !important; margin-bottom: 14px !important; }
+      .history-toolbar-controls { gap: 8px !important; }
+      .history-toolbar .time-filter-wrapper { width: 100%; }
+      .table-wrap { overflow: visible; background: transparent; border: 0; box-shadow: none; }
+      .data-table, .data-table tbody { display: block; width: 100%; }
+      .data-table thead { display: none; }
+      .data-table tbody tr {
+        display: block;
+        margin-bottom: 12px;
+        padding: 7px 12px;
+        background: var(--cream);
+        border: 1px solid var(--cream-dark);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow-sm);
+      }
+      .data-table tbody td {
+        display: grid;
+        grid-template-columns: minmax(82px, 34%) minmax(0, 1fr);
+        gap: 10px;
+        align-items: start;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--cream-dark);
+        overflow-wrap: anywhere;
+      }
+      .data-table tbody td::before {
+        content: attr(data-label);
+        color: var(--mocha-mid);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: .5px;
+        text-transform: uppercase;
+      }
+      .data-table tbody td:last-child { border-bottom: 0; }
+      .data-table tbody td[colspan] { display: block; }
+      .data-table tbody td[colspan]::before { content: none; }
+      #history-pagination { flex-wrap: wrap; gap: 10px; }
+      .modal-box { width: 94%; padding: 20px 16px; }
+    }
   </style>
 </head>
 <body>
 
 <header id="app-header">
+  <button type="button" class="mobile-menu-toggle" id="mobile-menu-toggle" aria-label="Open navigation menu" aria-controls="sidebar" aria-expanded="false">
+    <i class="fas fa-bars" aria-hidden="true"></i>
+  </button>
   <div class="header-brand">
     <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
     <div class="brand-text"><div class="name">SmartStock</div><div class="sub">Bean There Café</div></div>
@@ -560,6 +662,7 @@ $initialHistory = build_history_result($conn, $staffUserId, $todayStr, $todayStr
   </div>
 </header>
 
+<button type="button" class="sidebar-backdrop" id="sidebar-backdrop" aria-label="Close navigation menu" hidden tabindex="-1"></button>
 <nav id="sidebar">
   <div class="sidebar-section-label">Staff Panel</div>
   <a href="staffdashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
@@ -587,7 +690,7 @@ $initialHistory = build_history_result($conn, $staffUserId, $todayStr, $todayStr
   </div>
   <div style="padding:22px 26px;">
 
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:nowrap; overflow-x:auto; padding-bottom:4px; gap:12px;">
+    <div class="history-toolbar" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:nowrap; overflow-x:auto; padding-bottom:4px; gap:12px;">
       <?php if ($allowStaffExtendedHistoryFilters): ?>
       <div class="period-tabs" id="period-tabs" style="flex-shrink:0;">
         <button class="period-tab active" onclick="switchPeriod('daily',this)">Day</button>
@@ -595,7 +698,7 @@ $initialHistory = build_history_result($conn, $staffUserId, $todayStr, $todayStr
         <button class="period-tab" onclick="switchPeriod('monthly',this)">Month</button>
         <button class="period-tab" onclick="switchPeriod('yearly',this)">Year</button>
       </div>
-      <div style="display:flex; gap:12px; align-items:center; flex-wrap:nowrap; flex-shrink:0;">
+      <div class="history-toolbar-controls" style="display:flex; gap:12px; align-items:center; flex-wrap:nowrap; flex-shrink:0;">
         <div class="time-filter-wrapper" title="Filter by hours of the day">
           <label class="all-day-label">
             <input type="checkbox" id="all-day-cb" checked onchange="toggleAllDay()"> All Day
@@ -881,15 +984,15 @@ $initialHistory = build_history_result($conn, $staffUserId, $todayStr, $todayStr
     }
     tbody.innerHTML = transactions.map(t => `
       <tr>
-        <td class="text-mono">#${t.number}</td>
-        <td>${t.dateLabel}<br><span style="color:#aaa;font-size:11.5px;">${t.timeLabel}</span></td>
-        <td>${historyItemsSummary(t)}</td>
-        <td>${escapeHtml(t.cashier)}</td>
-        <td>${t.paymentLabel}</td>
-        <td>${escapeHtml(t.tableNumber || '—')}</td>
-        <td class="text-mono text-gold">${money(t.total)}</td>
-        <td><span class="status-pill ${t.status === 'completed' ? 'pill-success' : 'pill-red'}">${t.statusLabel}</span></td>
-        <td><button class="tbl-btn tbl-btn-edit" onclick="openTxnDetail(${t.id})"><i class="fas fa-eye"></i> View</button></td>
+        <td class="text-mono" data-label="#">#${t.number}</td>
+        <td data-label="Date &amp; Time">${t.dateLabel}<br><span style="color:#aaa;font-size:11.5px;">${t.timeLabel}</span></td>
+        <td data-label="Items">${historyItemsSummary(t)}</td>
+        <td data-label="Cashier">${escapeHtml(t.cashier)}</td>
+        <td data-label="Payment">${t.paymentLabel}</td>
+        <td data-label="Table #">${escapeHtml(t.tableNumber || '—')}</td>
+        <td class="text-mono text-gold" data-label="Total">${money(t.total)}</td>
+        <td data-label="Status"><span class="status-pill ${t.status === 'completed' ? 'pill-success' : 'pill-red'}">${t.statusLabel}</span></td>
+        <td data-label="Action"><button class="tbl-btn tbl-btn-edit" onclick="openTxnDetail(${t.id})"><i class="fas fa-eye"></i> View</button></td>
       </tr>
     `).join('');
   }
@@ -1118,6 +1221,39 @@ $initialHistory = build_history_result($conn, $staffUserId, $todayStr, $todayStr
     c.appendChild(t);
     setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, 2800);
   }
+
+  (() => {
+    const toggle = document.getElementById('mobile-menu-toggle');
+    const backdrop = document.getElementById('sidebar-backdrop');
+    const sidebar = document.getElementById('sidebar');
+    if (!toggle || !backdrop || !sidebar) return;
+    const setOpen = open => {
+      document.body.classList.toggle('sidebar-open', open);
+      sidebar.inert = window.innerWidth <= 900 && !open;
+      toggle.setAttribute('aria-expanded', String(open));
+      toggle.setAttribute('aria-label', open ? 'Close navigation menu' : 'Open navigation menu');
+      backdrop.hidden = !open;
+      backdrop.tabIndex = open ? 0 : -1;
+      if (open) {
+        const firstLink = sidebar.querySelector('a');
+        if (firstLink) firstLink.focus();
+      }
+    };
+    setOpen(false);
+    toggle.addEventListener('click', () => setOpen(toggle.getAttribute('aria-expanded') !== 'true'));
+    backdrop.addEventListener('click', () => {
+      setOpen(false);
+      toggle.focus();
+    });
+    sidebar.querySelectorAll('a').forEach(link => link.addEventListener('click', () => setOpen(false)));
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && toggle.getAttribute('aria-expanded') === 'true') {
+        setOpen(false);
+        toggle.focus();
+      }
+    });
+    window.addEventListener('resize', () => setOpen(false));
+  })();
 </script>
 </body>
 </html>

@@ -853,11 +853,67 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
     .btn-modal-primary:hover { background:var(--mocha-mid); }
     .btn-modal-cancel { width:100%; padding:9px; margin-top:7px; background:transparent; color:#bbb; border:1.5px solid var(--cream-dark); border-radius:8px; font-family:var(--font-body); font-size:13px; cursor:pointer; transition:all .2s; }
     .btn-modal-cancel:hover { color:var(--red-soft); border-color:var(--red-soft); }
+
+    .menu-toggle, .sidebar-backdrop { display: none; }
+    @media (max-width: 991.98px) {
+      #main { margin-left: 0; }
+      #sidebar { width: min(var(--sidebar-w), 84vw); transform: translateX(-100%); transition: transform .25s ease; box-shadow: var(--shadow-lg); }
+      body.sidebar-open #sidebar { transform: translateX(0); }
+      .menu-toggle { display:inline-flex; width:40px; height:40px; align-items:center; justify-content:center; flex-shrink:0; border:1px solid rgba(255,255,255,.18); border-radius:8px; background:rgba(255,255,255,.07); color:var(--cream); font-size:18px; cursor:pointer; }
+      .header-brand { width:auto; border-right:0; padding:0 14px; }
+      #app-header { padding-left:12px; }
+      .sidebar-backdrop { position:fixed; inset:var(--header-h) 0 0; z-index:850; background:rgba(20,10,8,.5); }
+      body.sidebar-open .sidebar-backdrop { display:block; }
+    }
+    @media (max-width: 767.98px) {
+      :root { --header-h:58px; }
+      #app-header { padding-right:12px; }
+      .brand-logo { width:36px; height:36px; font-size:17px; }
+      .brand-text .name { font-size:13px; }
+      .brand-text .sub, .header-clock, .header-user-name { display:none; }
+      .header-right { gap:8px; }
+      .header-user { padding:4px; }
+      .logout-link { padding:7px 10px; font-size:0; }
+      .logout-link i { font-size:14px; }
+      .page-strip { padding:13px 16px; align-items:flex-start; flex-direction:column; }
+      .page-strip > div:last-child { width:100%; flex-direction:column; }
+      .page-strip > div:last-child button { width:100%; min-height:42px; justify-content:center; }
+      #main > div:nth-child(2) { padding:16px !important; }
+      .product-toolbar { align-items:stretch; }
+      .search-box, .filter-select { width:100%; min-height:42px; }
+      .content-row .table-wrap { overflow:visible; background:transparent; border:0; box-shadow:none; }
+      .data-table, .data-table tbody { display:block; width:100%; }
+      .data-table thead { display:none; }
+      .data-table tbody { display:grid; gap:12px; }
+      .data-table tbody tr:not([data-mobile-card]) { display:block; background:var(--cream); border-radius:12px; padding:12px; }
+      .data-table tbody tr:not([data-mobile-card]) td { display:block; width:100%; text-align:center; }
+      .data-table tbody tr[data-mobile-card] { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:0 12px; padding:12px; background:var(--cream); border:1.5px solid var(--cream-dark); border-radius:12px; box-shadow:var(--shadow-sm); }
+      .data-table tbody tr[data-mobile-card] td { min-width:0; display:flex; align-items:flex-start; justify-content:space-between; gap:8px; padding:8px 0; border-bottom:1px solid var(--cream-dark); text-align:right; overflow-wrap:anywhere; }
+      .data-table tbody tr[data-mobile-card] td::before { content:attr(data-label); flex:0 0 auto; color:#81736a; font-size:10px; font-weight:700; letter-spacing:.4px; text-align:left; text-transform:uppercase; }
+      .data-table tbody tr[data-mobile-card] td:nth-child(2), .data-table tbody tr[data-mobile-card] td:last-child { grid-column:1/-1; }
+      .data-table tbody tr[data-mobile-card] td:nth-child(2) { justify-content:flex-start; font-weight:700; color:var(--mocha-deep); }
+      .data-table tbody tr[data-mobile-card] td:first-child { justify-content:flex-start; }
+      .data-table tbody tr[data-mobile-card] td:last-child { border-bottom:0; justify-content:flex-start; flex-wrap:wrap; }
+      .data-table tbody tr[data-mobile-card] td:last-child .tbl-btn { min-height:40px; }
+      .legend-card { padding:14px; }
+      #toast-container { left:12px; right:12px; bottom:12px; }
+      .toast-msg { width:100%; }
+      .modal-box { padding:22px 18px; max-height:92vh; }
+    }
+    @media (max-width: 380px) {
+      .header-brand { gap:8px; padding:0 8px; }
+      #app-header { padding-left:8px; }
+      .data-table tbody tr[data-mobile-card] { grid-template-columns:minmax(0,1fr); }
+      .data-table tbody tr[data-mobile-card] td:nth-child(2), .data-table tbody tr[data-mobile-card] td:last-child { grid-column:1; }
+    }
   </style>
 </head>
 <body data-reopen-recipe="<?= $reopenRecipeProductId ?>" data-reopen-sizes="<?= $reopenSizesProductId ?>">
 
 <header id="app-header">
+  <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Open navigation menu" aria-controls="sidebar" aria-expanded="false">
+    <i class="fas fa-bars" aria-hidden="true"></i>
+  </button>
   <div class="header-brand">
     <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
     <div class="brand-text"><div class="name">SmartStock</div><div class="sub">Bean There Café</div></div>
@@ -873,6 +929,7 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
   </div>
 </header>
 
+<div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
 <nav id="sidebar">
   <div class="sidebar-section-label">Staff Panel</div>
   <a href="staffdashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
@@ -1208,6 +1265,20 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
 
 <script>
   // Product catalog — loaded from the products table (see products-data script tag above)
+  const menuToggle = document.getElementById('menu-toggle');
+  const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+  function setSidebarOpen(isOpen) {
+    document.body.classList.toggle('sidebar-open', isOpen);
+    menuToggle.setAttribute('aria-expanded', String(isOpen));
+    menuToggle.setAttribute('aria-label', isOpen ? 'Close navigation menu' : 'Open navigation menu');
+    menuToggle.innerHTML = `<i class="fas ${isOpen ? 'fa-xmark' : 'fa-bars'}" aria-hidden="true"></i>`;
+  }
+  menuToggle.addEventListener('click', () => setSidebarOpen(!document.body.classList.contains('sidebar-open')));
+  sidebarBackdrop.addEventListener('click', () => setSidebarOpen(false));
+  document.querySelectorAll('#sidebar a').forEach(link => link.addEventListener('click', () => setSidebarOpen(false)));
+  document.addEventListener('keydown', event => { if (event.key === 'Escape') setSidebarOpen(false); });
+  window.addEventListener('resize', () => { if (window.innerWidth >= 992) setSidebarOpen(false); });
+
   const products = JSON.parse(document.getElementById('products-data').textContent);
   // Ingredient list (for the made-to-order recipe builder) — from product_ingredients
   const allIngredients = JSON.parse(document.getElementById('ingredients-data').textContent);
@@ -1330,13 +1401,13 @@ $reopenSizesProductId = (int)($_GET['sizes'] ?? 0);
     tbody.innerHTML = filtered.map(p => {
       const isMotd = p.type === 'made_to_order';
       return `
-      <tr>
-        <td>${p.image ? `<img src="${p.image}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:6px;">` : `<div style="width:40px;height:40px;border-radius:6px;background:var(--cream-dark);"></div>`}</td>
-        <td style="font-weight:600;">${p.name}${isMotd ? ' <span class="tag tag-supply" style="margin-left:4px;">Made to Order</span>' : ''}</td>
-        <td><span class="tag ${p.tag_class}">${p.category_name}</span></td>
-        <td>${isMotd ? '<span class="text-muted">—</span>' : `<div class="stock-indicator stock-${p.level}"><div class="stock-dot"></div>${p.stock}</div>`}</td>
-        <td class="text-mono">${money(p.price)}</td>
-        <td style="display:flex;gap:6px;align-items:center;">
+      <tr data-mobile-card>
+        <td data-label="Image">${p.image ? `<img src="${p.image}" alt="" style="width:40px;height:40px;object-fit:cover;border-radius:6px;">` : `<div style="width:40px;height:40px;border-radius:6px;background:var(--cream-dark);"></div>`}</td>
+        <td data-label="Product" style="font-weight:600;">${p.name}${isMotd ? ' <span class="tag tag-supply" style="margin-left:4px;">Made to Order</span>' : ''}</td>
+        <td data-label="Category"><span class="tag ${p.tag_class}">${p.category_name}</span></td>
+        <td data-label="Stock">${isMotd ? '<span class="text-muted">—</span>' : `<div class="stock-indicator stock-${p.level}"><div class="stock-dot"></div>${p.stock}</div>`}</td>
+        <td data-label="Selling Price" class="text-mono">${money(p.price)}</td>
+        <td data-label="Actions" style="display:flex;gap:6px;align-items:center;">
           <button class="tbl-btn tbl-btn-edit" onclick="openEditModal(${p.id})">Edit</button>
           ${isMotd ? `<button class="tbl-btn tbl-btn-edit" onclick="openRecipeModal(${p.id})">Recipe</button>` : ''}
           <button class="tbl-btn tbl-btn-edit" onclick="openSizesModal(${p.id})">Sizes${p.variants.length > 0 ? ` (${p.variants.length})` : ''}</button>

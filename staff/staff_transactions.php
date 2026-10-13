@@ -1701,12 +1701,95 @@ while ($row = $prodResult->fetch_assoc()) {
         padding-bottom: 110px;
       }
     }
+
+    .mobile-menu-toggle,
+    .sidebar-backdrop { display: none; }
+
+    @media (max-width: 900px) {
+      #app-header { padding: 0 12px; }
+      .mobile-menu-toggle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 40px;
+        height: 40px;
+        margin-right: 10px;
+        border: 1px solid rgba(245,236,215,.22);
+        border-radius: 8px;
+        background: transparent;
+        color: var(--cream);
+        font-size: 18px;
+        cursor: pointer;
+        flex: 0 0 auto;
+      }
+      .mobile-menu-toggle:focus-visible,
+      .sidebar-backdrop:focus-visible { outline: 3px solid var(--gold-light); outline-offset: 2px; }
+      .header-brand { width: auto; padding: 0 10px 0 0; border-right: 0; gap: 8px; }
+      .brand-logo { width: 36px; height: 36px; font-size: 17px; }
+      .header-center { display: none; }
+      #sidebar {
+        width: min(82vw, 300px);
+        transform: translateX(-105%);
+        transition: transform .22s ease;
+        box-shadow: var(--shadow-lg);
+      }
+      body.sidebar-open #sidebar { transform: translateX(0); }
+      .sidebar-backdrop {
+        position: fixed;
+        inset: var(--header-h) 0 0;
+        z-index: 850;
+        border: 0;
+        background: rgba(20,10,8,.48);
+      }
+      .sidebar-backdrop:not([hidden]) { display: block; }
+      #main { margin-left: 0; }
+      .page-strip { padding: 14px 18px; }
+      .pos-content { padding: 16px !important; }
+      .menu-toolbar { flex-wrap: wrap; gap: 10px; }
+      .menu-toolbar-title { width: 100%; }
+      .menu-toolbar .product-search-wrap { flex: 1 1 100%; }
+      .category-tabs { gap: 7px; }
+      .cat-tab { padding: 8px 13px; }
+    }
+
+    @media (max-width: 640px) {
+      .header-clock { display: none; }
+      .header-user { padding-right: 5px; }
+      .header-user-name { display: none; }
+      .logout-link { padding: 7px 9px; font-size: 0; }
+      .logout-link i { font-size: 14px; }
+      .page-strip { position: static; padding: 14px 16px; }
+      .pos-content { padding: 12px !important; }
+      .pos-main { gap: 16px; padding: 12px 4px 100px; }
+      .products-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+      .product-btn { padding: 14px 8px; }
+      .product-icon { height: 72px; font-size: 28px; }
+      .product-name { font-size: 12px; }
+      .product-price { font-size: 14px; }
+      .cart-fab { right: 14px; bottom: 14px; padding-right: 14px; }
+      .cart-panel {
+        right: 10px;
+        bottom: 72px;
+        width: calc(100vw - 20px);
+        max-width: none;
+        max-height: min(76vh, 620px);
+      }
+      .cart-panel-header { padding: 13px 14px 10px; }
+      .cart-panel-body { padding: 10px 14px; }
+      .cart-panel-footer { padding: 10px 14px 14px; }
+      .modal-box { width: 94%; max-height: 92vh; padding: 22px 18px; }
+      .modal-actions { gap: 8px; }
+      .modal-actions > button { min-width: 0; }
+    }
   </style>
 </head>
 
 <body>
   <!-- POS CONTENT -->
   <header id="app-header">
+    <button type="button" class="mobile-menu-toggle" id="mobile-menu-toggle" aria-label="Open navigation menu" aria-controls="sidebar" aria-expanded="false">
+      <i class="fas fa-bars" aria-hidden="true"></i>
+    </button>
     <div class="header-brand">
       <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
       <div class="brand-text">
@@ -1725,6 +1808,7 @@ while ($row = $prodResult->fetch_assoc()) {
     </div>
   </header>
 
+  <button type="button" class="sidebar-backdrop" id="sidebar-backdrop" aria-label="Close navigation menu" hidden tabindex="-1"></button>
   <nav id="sidebar">
     <div class="sidebar-section-label">Staff Panel</div>
     <a href="staffdashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
@@ -1753,7 +1837,7 @@ while ($row = $prodResult->fetch_assoc()) {
         <div class="sub" id="pos-date">Live Sales System</div>
       </div>
     </div>
-    <div style="padding:22px 26px;">
+    <div class="pos-content" style="padding:22px 26px;">
       <main class="pos-main">
         <section>
           <div class="menu-toolbar">
@@ -2793,6 +2877,39 @@ while ($row = $prodResult->fetch_assoc()) {
           c.appendChild(t);
           setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, 2800);
         }
+
+        (() => {
+          const toggle = document.getElementById('mobile-menu-toggle');
+          const backdrop = document.getElementById('sidebar-backdrop');
+          const sidebar = document.getElementById('sidebar');
+          if (!toggle || !backdrop || !sidebar) return;
+          const setOpen = open => {
+            document.body.classList.toggle('sidebar-open', open);
+            sidebar.inert = window.innerWidth <= 900 && !open;
+            toggle.setAttribute('aria-expanded', String(open));
+            toggle.setAttribute('aria-label', open ? 'Close navigation menu' : 'Open navigation menu');
+            backdrop.hidden = !open;
+            backdrop.tabIndex = open ? 0 : -1;
+            if (open) {
+              const firstLink = sidebar.querySelector('a');
+              if (firstLink) firstLink.focus();
+            }
+          };
+          setOpen(false);
+          toggle.addEventListener('click', () => setOpen(toggle.getAttribute('aria-expanded') !== 'true'));
+          backdrop.addEventListener('click', () => {
+            setOpen(false);
+            toggle.focus();
+          });
+          sidebar.querySelectorAll('a').forEach(link => link.addEventListener('click', () => setOpen(false)));
+          document.addEventListener('keydown', event => {
+            if (event.key === 'Escape' && toggle.getAttribute('aria-expanded') === 'true') {
+              setOpen(false);
+              toggle.focus();
+            }
+          });
+          window.addEventListener('resize', () => setOpen(false));
+        })();
       </script>
 </body>
 

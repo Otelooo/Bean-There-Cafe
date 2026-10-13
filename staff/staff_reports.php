@@ -1187,8 +1187,114 @@ $initialReport = build_staff_sales_report($conn, $staffUserId, 'daily', 0, $toda
     .btn-modal-cancel { width:100%; padding:9px; margin-top:7px; background:transparent; color:#bbb; border:1.5px solid var(--cream-dark); border-radius:8px; font-family:var(--font-body); font-size:13px; cursor:pointer; transition:all .2s; }
     .btn-modal-cancel:hover { color:var(--red-soft); border-color:var(--red-soft); }
 
+    .mobile-menu-toggle,
+    .sidebar-backdrop { display: none; }
+
+    @media (max-width: 900px) {
+      #app-header { padding: 0 12px; }
+      .mobile-menu-toggle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 40px;
+        height: 40px;
+        margin-right: 10px;
+        border: 1px solid rgba(245,236,215,.22);
+        border-radius: 8px;
+        background: transparent;
+        color: var(--cream);
+        font-size: 18px;
+        cursor: pointer;
+        flex: 0 0 auto;
+      }
+      .mobile-menu-toggle:focus-visible,
+      .sidebar-backdrop:focus-visible { outline: 3px solid var(--gold-light); outline-offset: 2px; }
+      .header-brand { width: auto; padding: 0 10px 0 0; border-right: 0; gap: 8px; }
+      .brand-logo { width: 36px; height: 36px; font-size: 17px; }
+      .header-center { display: none; }
+      #sidebar {
+        width: min(82vw, 300px);
+        transform: translateX(-105%);
+        transition: transform .22s ease;
+        box-shadow: var(--shadow-lg);
+      }
+      body.sidebar-open #sidebar { transform: translateX(0); }
+      .sidebar-backdrop {
+        position: fixed;
+        inset: var(--header-h) 0 0;
+        z-index: 850;
+        border: 0;
+        background: rgba(20,10,8,.48);
+      }
+      .sidebar-backdrop:not([hidden]) { display: block; }
+      #main { margin-left: 0; }
+      .page-strip { padding: 14px 18px; }
+      .report-content { padding: 18px !important; }
+      #report-toolbar {
+        flex-wrap: wrap !important;
+        overflow: visible !important;
+        align-items: stretch !important;
+      }
+      .period-tabs { width: 100%; }
+      .period-tab { flex: 1; padding-left: 8px; padding-right: 8px; }
+      .report-toolbar-controls { width: 100%; flex-wrap: wrap !important; }
+      .report-toolbar-controls > * { min-width: 0; }
+      .report-toolbar-controls .time-filter-wrapper { max-width: 100%; flex-wrap: wrap; height: auto; min-height: 38px; }
+      .report-toolbar-controls > .filter-select { flex: 1 1 100%; }
+    }
+
+    @media (max-width: 640px) {
+      .header-clock { display: none; }
+      .header-user { padding-right: 5px; }
+      .header-user-name { display: none; }
+      .logout-link { padding: 7px 9px; font-size: 0; }
+      .logout-link i { font-size: 14px; }
+      .page-strip { position: static; align-items: flex-start; gap: 12px; flex-direction: column; padding: 14px 16px; }
+      .page-strip-actions { width: 100%; }
+      .page-strip-actions button { flex: 1; justify-content: center; }
+      .report-content { padding: 14px !important; }
+      .report-toolbar-controls { gap: 8px !important; }
+      .report-toolbar-controls .time-filter-wrapper { width: 100%; }
+      .report-toolbar-controls input[type="date"] { min-width: 0; width: auto !important; flex: 1; }
+      .report-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      .rpt-mini { min-width: 0; padding: 11px; }
+      .rpt-mini-value { overflow-wrap: anywhere; font-size: 18px; }
+      .chart-card { padding: 15px 12px; }
+      .modal-box { width: 94%; padding: 20px 16px; }
+      .top-products-table,
+      .top-products-table tbody { display: block; width: 100%; }
+      .top-products-table thead { display: none; }
+      .top-products-table tbody tr {
+        display: block;
+        margin-bottom: 10px;
+        padding: 7px 10px;
+        background: var(--cream);
+        border: 1px solid var(--cream-dark);
+        border-radius: var(--radius);
+      }
+      .top-products-table tbody td {
+        display: grid;
+        grid-template-columns: minmax(82px, 34%) minmax(0, 1fr);
+        gap: 8px;
+        padding: 7px 0;
+        border-bottom: 1px solid var(--cream-dark);
+        overflow-wrap: anywhere;
+      }
+      .top-products-table tbody td::before {
+        content: attr(data-label);
+        color: var(--mocha-mid);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: .4px;
+        text-transform: uppercase;
+      }
+      .top-products-table tbody td:last-child { border-bottom: 0; }
+      .top-products-table tbody td[colspan] { display: block; }
+      .top-products-table tbody td[colspan]::before { content: none; }
+    }
+
     @media print {
-      #app-header, #sidebar, #report-toolbar, .page-strip .btn-outline, .page-strip .btn-primary, #toast-container, .modal-overlay {
+      #app-header, #sidebar, .mobile-menu-toggle, .sidebar-backdrop, #report-toolbar, .page-strip .btn-outline, .page-strip .btn-primary, #toast-container, .modal-overlay {
         display: none !important;
       }
       #main {
@@ -1207,6 +1313,9 @@ $initialReport = build_staff_sales_report($conn, $staffUserId, 'daily', 0, $toda
 <body>
 
   <header id="app-header">
+    <button type="button" class="mobile-menu-toggle" id="mobile-menu-toggle" aria-label="Open navigation menu" aria-controls="sidebar" aria-expanded="false">
+      <i class="fas fa-bars" aria-hidden="true"></i>
+    </button>
     <div class="header-brand">
       <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
       <div class="brand-text">
@@ -1225,6 +1334,7 @@ $initialReport = build_staff_sales_report($conn, $staffUserId, 'daily', 0, $toda
     </div>
   </header>
 
+  <button type="button" class="sidebar-backdrop" id="sidebar-backdrop" aria-label="Close navigation menu" hidden tabindex="-1"></button>
   <nav id="sidebar">
     <div class="sidebar-section-label">Staff Panel</div>
     <a href="staffdashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
@@ -1251,7 +1361,7 @@ $initialReport = build_staff_sales_report($conn, $staffUserId, 'daily', 0, $toda
         </h1>
         <div class="sub">Analyze performance trends across time periods</div>
       </div>
-      <div style="display:flex;gap:8px;">
+      <div class="page-strip-actions" style="display:flex;gap:8px;">
         <button class="btn-outline" onclick="printReport()"><i class="fas fa-print"></i>
           Print</button>
         <button class="btn-primary" id="export-pdf-btn" onclick="exportReportPdf()"><i class="fas fa-file-pdf"></i>
@@ -1259,7 +1369,7 @@ $initialReport = build_staff_sales_report($conn, $staffUserId, 'daily', 0, $toda
       </div>
     </div>
 
-    <div style="padding:22px 26px;">
+    <div class="report-content" style="padding:22px 26px;">
 
       <div id="report-toolbar"
         style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:nowrap; overflow-x:auto; padding-bottom:4px; gap:12px;">
@@ -1271,7 +1381,7 @@ $initialReport = build_staff_sales_report($conn, $staffUserId, 'daily', 0, $toda
           <button class="period-tab" onclick="switchPeriod('yearly',this)">Yearly</button>
         </div>
 
-        <div style="display:flex; gap:12px; align-items:center; flex-shrink:0;">
+        <div class="report-toolbar-controls" style="display:flex; gap:12px; align-items:center; flex-shrink:0;">
 
           <div class="time-filter-wrapper" title="Filter by hours of the day">
             <label class="all-day-label">
@@ -1373,7 +1483,7 @@ $initialReport = build_staff_sales_report($conn, $staffUserId, 'daily', 0, $toda
         </select>
       </div>
       <div style="max-height:50vh;overflow-y:auto;">
-        <table class="rec-table">
+        <table class="rec-table top-products-table">
           <thead>
             <tr>
               <th>Rank</th>
@@ -1539,12 +1649,12 @@ $initialReport = build_staff_sales_report($conn, $staffUserId, 'daily', 0, $toda
       }));
       tbody.innerHTML = lastTopProductsRendered.map(p => `
         <tr>
-          <td>${medals[p.rank] || p.rank}</td>
-          <td style="font-weight:600;">${p.name}</td>
-          <td><span class="tag ${p.tag_class}">${p.category_name}</span></td>
-          <td class="text-mono">${p.units.toLocaleString()}</td>
-          <td class="text-mono text-gold">${money(p.revenue)}</td>
-          <td>
+          <td data-label="Rank">${medals[p.rank] || p.rank}</td>
+          <td data-label="Product" style="font-weight:600;">${p.name}</td>
+          <td data-label="Category"><span class="tag ${p.tag_class}">${p.category_name}</span></td>
+          <td data-label="Units Sold" class="text-mono">${p.units.toLocaleString()}</td>
+          <td data-label="Revenue" class="text-mono text-gold">${money(p.revenue)}</td>
+          <td data-label="Share">
             <div style="display:flex;align-items:center;gap:7px;">
               <div style="width:70px;height:6px;background:var(--cream-dark);border-radius:3px;overflow:hidden;">
                 <div style="width:${p.share}%;height:100%;background:var(--gold);border-radius:3px;"></div>
@@ -1717,6 +1827,39 @@ $initialReport = build_staff_sales_report($conn, $staffUserId, 'daily', 0, $toda
       c.appendChild(t);
       setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, 2800);
     }
+
+    (() => {
+      const toggle = document.getElementById('mobile-menu-toggle');
+      const backdrop = document.getElementById('sidebar-backdrop');
+      const sidebar = document.getElementById('sidebar');
+      if (!toggle || !backdrop || !sidebar) return;
+      const setOpen = open => {
+        document.body.classList.toggle('sidebar-open', open);
+        sidebar.inert = window.innerWidth <= 900 && !open;
+        toggle.setAttribute('aria-expanded', String(open));
+        toggle.setAttribute('aria-label', open ? 'Close navigation menu' : 'Open navigation menu');
+        backdrop.hidden = !open;
+        backdrop.tabIndex = open ? 0 : -1;
+        if (open) {
+          const firstLink = sidebar.querySelector('a');
+          if (firstLink) firstLink.focus();
+        }
+      };
+      setOpen(false);
+      toggle.addEventListener('click', () => setOpen(toggle.getAttribute('aria-expanded') !== 'true'));
+      backdrop.addEventListener('click', () => {
+        setOpen(false);
+        toggle.focus();
+      });
+      sidebar.querySelectorAll('a').forEach(link => link.addEventListener('click', () => setOpen(false)));
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && toggle.getAttribute('aria-expanded') === 'true') {
+          setOpen(false);
+          toggle.focus();
+        }
+      });
+      window.addEventListener('resize', () => setOpen(false));
+    })();
   </script>
 </body>
 

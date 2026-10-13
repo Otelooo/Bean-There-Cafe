@@ -147,11 +147,60 @@ $initials = strtoupper(substr($displayName, 0, 2));
     .sidebar-divider{border:0;border-top:1px solid rgba(255,255,255,.07);margin:8px 16px}
     #sidebar .sidebar-footer{margin-top:auto;padding:16px 20px;border-top:1px solid rgba(255,255,255,.07);text-align:center}
     #sidebar .sidebar-footer p{margin:0;font-size:10px;color:rgba(245,236,215,.22);line-height:1.7}
-    @media(max-width:760px){#sidebar{display:none}}
+    .menu-toggle,.sidebar-backdrop{display:none}
+    @media(max-width:991.98px){
+      main{margin-left:0}
+      #sidebar{display:flex!important;width:min(240px,84vw);transform:translateX(-100%);transition:transform .25s ease;box-shadow:0 12px 40px rgba(74,44,42,.22)}
+      body.sidebar-open #sidebar{transform:translateX(0)}
+      .menu-toggle{display:inline-flex;width:40px;height:40px;align-items:center;justify-content:center;flex-shrink:0;border:1px solid rgba(255,255,255,.18);border-radius:8px;background:rgba(255,255,255,.07);color:var(--cream);font-size:18px;cursor:pointer}
+      .header-brand{width:auto;border:0;padding:0 14px}
+      #app-header{padding-left:12px}
+      .sidebar-backdrop{position:fixed;inset:var(--header) 0 0;z-index:850;background:rgba(20,10,8,.5)}
+      body.sidebar-open .sidebar-backdrop{display:block}
+    }
+    @media(max-width:767.98px){
+      :root{--header:58px}
+      #app-header{padding-right:12px}
+      .brand-logo{width:36px;height:36px;font-size:17px}
+      .brand-text .name{font-size:13px}
+      .brand-text .sub,.header-clock,.header-user-name{display:none}
+      .header-right{gap:8px}
+      .header-user{padding:4px}
+      .logout-link{padding:7px 10px;font-size:0}
+      .logout-link i{font-size:14px}
+      .strip{padding:13px 16px;align-items:flex-start}
+      .strip-actions{width:100%;flex-direction:column}
+      .strip-actions button{width:100%;min-height:42px;justify-content:center}
+      .content{padding:16px}
+      .filter-panel,.toolbar,.filters{width:100%;align-items:stretch;flex-direction:column}
+      .filter-panel .field,.filters>*{width:100%}
+      .field input,.filters input,.filters select{width:100%;min-height:42px}
+      .toolbar{gap:10px}
+      .table-wrap{overflow:visible;background:transparent;border:0;box-shadow:none}
+      table{display:block;width:100%;min-width:0}
+      thead{display:none}
+      tbody{display:grid;gap:12px}
+      tbody tr[data-card]{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0 12px;padding:12px;background:var(--cream);border:1px solid var(--line);border-radius:12px;box-shadow:0 2px 8px #4a2c2a1a}
+      tbody tr[data-card] td{min-width:0;display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);overflow-wrap:anywhere}
+      tbody tr[data-card] td::before{content:attr(data-label);flex:0 0 auto;color:#81736a;font-size:10px;font-weight:700;letter-spacing:.4px;text-transform:uppercase}
+      tbody tr[data-card] td:first-child{grid-column:1/-1}
+      tbody tr[data-card] td:last-child{grid-column:1/-1;justify-content:flex-end;border-bottom:0}
+      .actions{flex-wrap:wrap}
+      .actions button{min-width:42px;min-height:40px}
+      .modal{padding:22px 18px;max-height:92vh;overflow-y:auto}
+      .toast{left:12px;right:12px;bottom:12px}
+    }
+    @media(max-width:380px){
+      .header-brand{gap:8px;padding:0 8px}
+      #app-header{padding-left:8px}
+      tbody tr[data-card]{grid-template-columns:minmax(0,1fr)}
+      tbody tr[data-card] td:first-child,tbody tr[data-card] td:last-child{grid-column:1}
+    }
     </style>
 </head>
 <body>
 <header id="app-header">
+  <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Open navigation menu" aria-controls="sidebar" aria-expanded="false"><i class="fas fa-bars" aria-hidden="true"></i></button>
   <div class="header-brand">
     <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
     <div class="brand-text"><div class="name">SmartStock</div><div class="sub">Bean There Café</div></div>
@@ -165,6 +214,7 @@ $initials = strtoupper(substr($displayName, 0, 2));
     <a href="../logout.php" class="logout-link"><i class="fas fa-right-from-bracket"></i> Logout</a>
   </div>
 </header>
+<div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
 <nav id="sidebar">
   <div class="sidebar-section-label">Staff Panel</div>
   <a href="staffdashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
@@ -186,10 +236,19 @@ $initials = strtoupper(substr($displayName, 0, 2));
 <div class="overlay" id="expense-modal"><div class="modal"><h2 id="modal-title">Add Expense</h2><p>Enter the expense details below.</p><form method="post"><input type="hidden" name="action" id="form-action" value="add"><input type="hidden" name="expense_id" id="expense-id"><div class="field"><label>Expense Name</label><input name="expense_name" id="expense-name" maxlength="100" required></div><div class="field"><label>Price (₱)</label><input type="number" name="expense_price" id="expense-price" min="0" step="0.01" required></div><div class="field"><label>Time</label><input type="datetime-local" name="expense_time" id="expense-time" required></div><div class="field"><label>Expense Category</label><select name="expense_category" id="expense-category" required><?php foreach ($categories as $key => $label): ?><option value="<?= $key ?>"><?= $label ?></option><?php endforeach; ?></select></div><button type="submit"><i class="fas fa-check"></i> Save Expense</button><button type="button" class="cancel" onclick="closeExpenseModal()">Cancel</button></form></div></div>
 <?php if ($msg): ?><div class="toast <?= $msgType === 'warn' ? 'warn' : '' ?>"><?= htmlspecialchars($msg) ?></div><?php endif; ?>
 <script>
+const menuToggle=document.getElementById('menu-toggle'),sidebarBackdrop=document.getElementById('sidebar-backdrop');
+function setSidebarOpen(isOpen){document.body.classList.toggle('sidebar-open',isOpen);menuToggle.setAttribute('aria-expanded',String(isOpen));menuToggle.setAttribute('aria-label',isOpen?'Close navigation menu':'Open navigation menu');menuToggle.innerHTML=`<i class="fas ${isOpen?'fa-xmark':'fa-bars'}" aria-hidden="true"></i>`}
+menuToggle.addEventListener('click',()=>setSidebarOpen(!document.body.classList.contains('sidebar-open')));
+sidebarBackdrop.addEventListener('click',()=>setSidebarOpen(false));
+document.querySelectorAll('#sidebar a').forEach(link=>link.addEventListener('click',()=>setSidebarOpen(false)));
+document.addEventListener('keydown',event=>{if(event.key==='Escape')setSidebarOpen(false)});
+window.addEventListener('resize',()=>{if(window.innerWidth>=992)setSidebarOpen(false)});
+</script>
+<script>
 const expenses=<?= json_encode($expenses, JSON_HEX_TAG|JSON_HEX_APOS|JSON_HEX_QUOT|JSON_HEX_AMP) ?>; const categoryLabels=<?= json_encode($categories) ?>;
 function money(value){return '₱'+Number(value).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} function esc(value){const node=document.createElement('span');node.textContent=value??'';return node.innerHTML} function displayTime(value){const date=new Date(String(value).replace(' ','T'));return Number.isNaN(date.getTime())?value:date.toLocaleString('en-PH',{dateStyle:'medium',timeStyle:'short'})}
 function filteredExpenses(){const search=document.getElementById('search').value.toLowerCase().trim(),category=document.getElementById('category-filter').value,dateFrom=document.getElementById('date-from').value,dateTo=document.getElementById('date-to').value,hourFrom=document.getElementById('hour-from').value,hourTo=document.getElementById('hour-to').value;return expenses.filter(item=>{const value=String(item.expense_time).replace(' ','T'),date=value.slice(0,10),hour=value.slice(11,16),hourMatches=(!hourFrom||!hourTo)||(hourFrom<=hourTo?hour>=hourFrom&&hour<=hourTo:hour>=hourFrom||hour<=hourTo);return(!search||item.expense_name.toLowerCase().includes(search))&&(!category||item.expense_category===category)&&(!dateFrom||date>=dateFrom)&&(!dateTo||date<=dateTo)&&hourMatches})}
-function renderExpenses(){const rows=filteredExpenses();document.getElementById('total').textContent=money(rows.reduce((sum,item)=>sum+Number(item.expense_price),0));document.getElementById('expense-list').innerHTML=rows.length?rows.map(item=>`<tr><td><strong>${esc(item.expense_name)}</strong></td><td><span class="tag">${esc(categoryLabels[item.expense_category])}</span></td><td class="money">${money(item.expense_price)}</td><td>${esc(displayTime(item.expense_time))}</td><td>${esc(item.inserted_by||'Unknown')}</td><td><div class="actions"><button type="button" class="small" onclick="editExpense(${item.expense_id})"><i class="fas fa-pen"></i></button><form method="post" onsubmit="return confirm('Delete this expense?')"><input type="hidden" name="action" value="delete"><input type="hidden" name="expense_id" value="${item.expense_id}"><button type="submit" class="small danger"><i class="fas fa-trash"></i></button></form></div></td></tr>`).join(''):'<tr><td class="empty" colspan="6">No expenses match the selected filters.</td></tr>'}
+function renderExpenses(){const rows=filteredExpenses();document.getElementById('total').textContent=money(rows.reduce((sum,item)=>sum+Number(item.expense_price),0));document.getElementById('expense-list').innerHTML=rows.length?rows.map(item=>`<tr data-card><td data-label="Expense"><strong>${esc(item.expense_name)}</strong></td><td data-label="Category"><span class="tag">${esc(categoryLabels[item.expense_category])}</span></td><td data-label="Price" class="money">${money(item.expense_price)}</td><td data-label="Time">${esc(displayTime(item.expense_time))}</td><td data-label="Inserted By">${esc(item.inserted_by||'Unknown')}</td><td data-label="Actions"><div class="actions"><button type="button" class="small" aria-label="Edit expense" title="Edit" onclick="editExpense(${item.expense_id})"><i class="fas fa-pen"></i></button><form method="post" onsubmit="return confirm('Delete this expense?')"><input type="hidden" name="action" value="delete"><input type="hidden" name="expense_id" value="${item.expense_id}"><button type="submit" class="small danger" aria-label="Delete expense" title="Delete"><i class="fas fa-trash"></i></button></form></div></td></tr>`).join(''):'<tr><td class="empty" colspan="6">No expenses match the selected filters.</td></tr>'}
 function clearExpenseFilters(){['search','category-filter','date-from','date-to','hour-from','hour-to'].forEach(id=>document.getElementById(id).value='');renderExpenses()} function printExpenses(){if(!filteredExpenses().length){alert('No expenses match the selected filters.');return}window.print()}
 function openExpenseModal(item=null){document.getElementById('expense-modal').classList.add('show');document.getElementById('modal-title').textContent=item?'Edit Expense':'Add Expense';document.getElementById('form-action').value=item?'edit':'add';document.getElementById('expense-id').value=item?.expense_id||'';document.getElementById('expense-name').value=item?.expense_name||'';document.getElementById('expense-price').value=item?.expense_price??'';document.getElementById('expense-time').value=item?item.expense_time.replace(' ','T').slice(0,16):new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16);document.getElementById('expense-category').value=item?.expense_category||'foods'} function editExpense(id){openExpenseModal(expenses.find(item=>item.expense_id===id))} function closeExpenseModal(){document.getElementById('expense-modal').classList.remove('show')} document.getElementById('expense-modal').addEventListener('click',event=>{if(event.target.id==='expense-modal')closeExpenseModal()});document.getElementById('clock').textContent=new Date().toLocaleTimeString('en-PH');setInterval(()=>document.getElementById('clock').textContent=new Date().toLocaleTimeString('en-PH'),1000);renderExpenses();
 </script>

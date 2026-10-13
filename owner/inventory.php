@@ -335,6 +335,65 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
     .btn-outline { padding:9px 17px; border-radius:8px; background:transparent; color:var(--mocha); border:1.5px solid var(--mocha); font-family:var(--font-body); font-size:13px; font-weight:600; cursor:pointer; transition:all .2s; display:flex; align-items:center; gap:6px; }
     .btn-outline:hover { background:var(--mocha); color:var(--cream); }
 
+    .menu-toggle {
+      display:none; width:40px; height:40px; align-items:center; justify-content:center;
+      border:1px solid rgba(255,255,255,.18); border-radius:8px;
+      background:rgba(255,255,255,.07); color:var(--cream); font-size:18px; cursor:pointer;
+    }
+    .sidebar-backdrop { display:none; }
+    @media (max-width:991.98px) {
+      #main { margin-left:0; }
+      #sidebar { width:min(var(--sidebar-w), 84vw); transform:translateX(-100%); transition:transform .25s ease; box-shadow:var(--shadow-lg); }
+      body.sidebar-open #sidebar { transform:translateX(0); }
+      .sidebar-backdrop { position:fixed; inset:var(--header-h) 0 0; z-index:850; background:rgba(20,10,8,.5); }
+      body.sidebar-open .sidebar-backdrop { display:block; }
+      .menu-toggle { display:inline-flex; flex-shrink:0; }
+      .header-brand { width:auto; border-right:0; padding:0 14px; }
+      #app-header { padding-left:12px; }
+    }
+    @media (max-width:767.98px) {
+      :root { --header-h:58px; }
+      #app-header { padding-right:12px; }
+      .brand-logo { width:36px; height:36px; font-size:17px; }
+      .brand-text .name { font-size:13px; }
+      .brand-text .sub { font-size:8px; letter-spacing:1px; }
+      .header-right { gap:8px; }
+      .header-clock, .header-user-name { display:none; }
+      .header-user { padding:4px; }
+      .logout-link { padding:7px 10px; font-size:0; }
+      .logout-link i { font-size:14px; }
+      .page-strip { align-items:flex-start; flex-direction:column; gap:12px; padding:13px 16px; }
+      .page-strip > div:last-child { width:100%; flex-direction:column; }
+      .page-strip > div:last-child > button { width:100%; justify-content:center; min-height:42px; }
+      #main > div:nth-child(2) { padding:16px !important; }
+      .inv-toolbar { align-items:stretch; flex-direction:column; }
+      .search-box, .inv-toolbar .filter-select { min-width:0; width:100%; min-height:42px; }
+      .content-row { flex-direction:column; }
+      .content-row .table-wrap, .legend-card { width:100%; }
+      .table-wrap { overflow:visible; background:transparent; border:0; box-shadow:none; }
+      .data-table, .data-table tbody { display:block; width:100%; }
+      .data-table thead { display:none; }
+      .data-table tbody { display:grid; gap:12px; }
+      .data-table tbody tr:not([data-mobile-card]) { display:block; background:var(--cream); border:1.5px solid var(--cream-dark); border-radius:var(--radius); }
+      .data-table tbody tr[data-mobile-card] { display:grid; grid-template-columns:minmax(0,1fr); padding:12px 14px; background:var(--cream); border:1.5px solid var(--cream-dark); border-radius:var(--radius); box-shadow:var(--shadow-sm); }
+      .data-table tbody tr[data-mobile-card] td { min-width:0; display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:9px 0; border-bottom:1px solid var(--cream-dark); overflow-wrap:anywhere; }
+      .data-table tbody tr[data-mobile-card] td::before { content:attr(data-label); flex:0 0 auto; color:#81736a; font-size:10px; font-weight:700; letter-spacing:.5px; text-align:left; text-transform:uppercase; }
+      .data-table tbody tr[data-mobile-card] td:last-child { display:flex !important; flex-wrap:wrap; justify-content:flex-start; gap:6px; border-bottom:0; }
+      .data-table tbody tr[data-mobile-card] td:last-child::before { content:"Actions"; }
+      .data-table tbody tr[data-mobile-card] td:last-child button { min-height:38px; }
+      .data-table tbody tr[data-mobile-card] td:nth-child(2) { font-weight:700; }
+      .legend-card { padding:14px 16px; }
+      #toast-container { left:12px; right:12px; bottom:12px; }
+      .toast-msg { width:100%; }
+      .modal-box { padding:22px 18px; max-height:92vh; }
+    }
+    @media (max-width:380px) {
+      .brand-text .sub { display:none; }
+      .header-brand { gap:8px; padding:0 8px; }
+      #app-header { padding-left:8px; }
+      .logout-link { padding:7px 8px; }
+    }
+
     /* ── PRINT-ONLY REPORT ── */
     #print-report { display:none; }
     @media print {
@@ -362,6 +421,9 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
 <body>
 
 <header id="app-header">
+  <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Open navigation menu" aria-controls="sidebar" aria-expanded="false">
+    <i class="fas fa-bars" aria-hidden="true"></i>
+  </button>
   <div class="header-brand">
     <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
     <div class="brand-text"><div class="name">SmartStock</div><div class="sub">Bean There Café</div></div>
@@ -377,6 +439,7 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
   </div>
 </header>
 
+<div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
 <nav id="sidebar">
   <div class="sidebar-section-label">Owner Panel</div>
   <a href="dashboard.php" class="nav-item"><i class="fas fa-chart-line"></i> Dashboard</a>
@@ -606,17 +669,17 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
     }
 
     tbody.innerHTML = filtered.map(i => `
-      <tr>
-        <td class="text-mono">${i.code || '<span class="text-muted">—</span>'}</td>
-        <td style="font-weight:600;">${i.name}</td>
-        <td><div class="stock-indicator stock-${i.level}"><div class="stock-dot"></div>${qty(i.stock)}</div></td>
-        <td class="text-mono">${i.unit_label}</td>
-        <td>${i.supplier ? i.supplier : '<span class="text-muted">—</span>'}</td>
-        <td class="text-mono" style="font-size:12px;">${i.contact ? i.contact : '<span class="text-muted">—</span>'}</td>
-        <td title="${i.restock_details}">${i.restock_details ? i.restock_details.slice(0, 55) + (i.restock_details.length > 55 ? '…' : '') : '<span class="text-muted">—</span>'}</td>
-        <td class="text-mono" style="font-size:11px;">${i.updated_at || '<span class="text-muted">—</span>'}</td>
-        <td><span class="status-pill ${i.level === 'ok' ? 'pill-success' : i.level === 'low' ? 'pill-warn' : 'pill-red'}">${levelLabels[i.level]}</span></td>
-        <td style="display:flex;gap:6px;align-items:center;">
+      <tr data-mobile-card>
+        <td data-label="Code" class="text-mono">${i.code || '<span class="text-muted">—</span>'}</td>
+        <td data-label="Ingredient" style="font-weight:600;">${i.name}</td>
+        <td data-label="Stock"><div class="stock-indicator stock-${i.level}"><div class="stock-dot"></div>${qty(i.stock)}</div></td>
+        <td data-label="Unit" class="text-mono">${i.unit_label}</td>
+        <td data-label="Supplier">${i.supplier ? i.supplier : '<span class="text-muted">—</span>'}</td>
+        <td data-label="Contact" class="text-mono" style="font-size:12px;">${i.contact ? i.contact : '<span class="text-muted">—</span>'}</td>
+        <td data-label="Last Restock / Delivery" title="${i.restock_details}">${i.restock_details ? i.restock_details.slice(0, 55) + (i.restock_details.length > 55 ? '…' : '') : '<span class="text-muted">—</span>'}</td>
+        <td data-label="Last Updated" class="text-mono" style="font-size:11px;">${i.updated_at || '<span class="text-muted">—</span>'}</td>
+        <td data-label="Status"><span class="status-pill ${i.level === 'ok' ? 'pill-success' : i.level === 'low' ? 'pill-warn' : 'pill-red'}">${levelLabels[i.level]}</span></td>
+        <td data-label="Actions" style="display:flex;gap:6px;align-items:center;">
           <button class="tbl-btn tbl-btn-edit" onclick="openEditModal(${i.id})">Edit</button>
           <form method="POST" action="inventory.php" style="display:contents;" onsubmit="return confirmDelete(event, 'Delete ${i.name.replace(/'/g, "\\'")}?')">
             <input type="hidden" name="action" value="delete">
@@ -846,6 +909,19 @@ $ingredientAlertCount = count(array_filter($ingredients, fn($i) => $i['level'] !
     c.appendChild(t);
     setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; setTimeout(() => t.remove(), 300); }, 2800);
   }
+
+  const menuToggle = document.getElementById('menu-toggle');
+  const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+  function setSidebarOpen(open) {
+    document.body.classList.toggle('sidebar-open', open);
+    menuToggle.setAttribute('aria-expanded', String(open));
+    menuToggle.setAttribute('aria-label', open ? 'Close navigation menu' : 'Open navigation menu');
+    menuToggle.innerHTML = `<i class="fas fa-${open ? 'xmark' : 'bars'}" aria-hidden="true"></i>`;
+  }
+  menuToggle.addEventListener('click', () => setSidebarOpen(!document.body.classList.contains('sidebar-open')));
+  sidebarBackdrop.addEventListener('click', () => setSidebarOpen(false));
+  document.querySelectorAll('#sidebar .nav-item').forEach(link => link.addEventListener('click', () => setSidebarOpen(false)));
+  document.addEventListener('keydown', event => { if (event.key === 'Escape') setSidebarOpen(false); });
 </script>
 </body>
 </html>

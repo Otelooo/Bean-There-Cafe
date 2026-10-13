@@ -1168,12 +1168,115 @@ $ingredientAlertCount = $criticalIngredientCount + $lowIngredientCount;
       color: var(--red-soft);
       border-color: var(--red-soft);
     }
+
+    .menu-toggle,
+    .sidebar-backdrop { display: none; }
+
+    @media (max-width: 991.98px) {
+      #main { margin-left: 0; }
+      #sidebar {
+        width: min(var(--sidebar-w), 84vw);
+        transform: translateX(-100%);
+        transition: transform .25s ease;
+        box-shadow: var(--shadow-lg);
+      }
+      body.sidebar-open #sidebar { transform: translateX(0); }
+      .menu-toggle {
+        display: inline-flex;
+        width: 40px;
+        height: 40px;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        border: 1px solid rgba(255,255,255,.18);
+        border-radius: 8px;
+        background: rgba(255,255,255,.07);
+        color: var(--cream);
+        font-size: 18px;
+        cursor: pointer;
+      }
+      .header-brand { width: auto; border-right: 0; padding: 0 14px; }
+      #app-header { padding-left: 12px; }
+      .sidebar-backdrop {
+        position: fixed;
+        inset: var(--header-h) 0 0;
+        z-index: 850;
+        background: rgba(20,10,8,.5);
+      }
+      body.sidebar-open .sidebar-backdrop { display: block; }
+    }
+
+    @media (max-width: 767.98px) {
+      :root { --header-h: 58px; }
+      #app-header { padding-right: 12px; }
+      .brand-logo { width: 36px; height: 36px; font-size: 17px; }
+      .brand-text .name { font-size: 13px; }
+      .brand-text .sub, .header-clock, .header-user-name { display: none; }
+      .header-right { gap: 8px; }
+      .header-user { padding: 4px; }
+      .logout-link { padding: 7px 10px; font-size: 0; }
+      .logout-link i { font-size: 14px; }
+      .page-strip { padding: 13px 16px; gap: 10px; }
+      .page-strip h1 { font-size: 19px; }
+      .page-strip .btn-primary { min-height: 42px; }
+      #main > div:nth-child(2) { padding: 16px !important; }
+      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .charts-grid, .two-col { grid-template-columns: minmax(0, 1fr); }
+      .chart-card, .dash-card { min-width: 0; padding: 16px; }
+      .period-tabs { flex-wrap: wrap; }
+      .rec-table, .rec-table tbody { display: block; width: 100%; }
+      .rec-table thead { display: none; }
+      .rec-table tbody { display: grid; gap: 12px; }
+      .rec-table tbody tr:not([data-mobile-card]) { display: block; padding: 12px; }
+      .rec-table tbody tr[data-mobile-card] {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 0 12px;
+        padding: 12px;
+        background: var(--cream-light);
+        border: 1px solid var(--cream-dark);
+        border-radius: var(--radius);
+      }
+      .rec-table tbody tr[data-mobile-card] td {
+        min-width: 0;
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--cream-dark);
+        overflow-wrap: anywhere;
+      }
+      .rec-table tbody tr[data-mobile-card] td::before {
+        content: attr(data-label);
+        flex: 0 0 auto;
+        color: var(--mocha-mid);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: .4px;
+        text-transform: uppercase;
+      }
+      .rec-table tbody tr[data-mobile-card] td:nth-child(2) { grid-column: 1 / -1; }
+      .rec-table tbody tr[data-mobile-card] td:last-child { border-bottom: 0; }
+    }
+
+    @media (max-width: 480px) {
+      .page-strip { align-items: stretch; flex-direction: column; }
+      .page-strip .btn-primary { width: 100%; justify-content: center; }
+      .kpi-grid { grid-template-columns: minmax(0, 1fr); }
+      .rec-table tbody tr[data-mobile-card] { grid-template-columns: minmax(0, 1fr); }
+      .rec-table tbody tr[data-mobile-card] td:nth-child(2) { grid-column: 1; }
+      .period-tab { flex: 1 1 auto; padding: 7px 12px; }
+    }
   </style>
 </head>
 
 <body>
 
   <header id="app-header">
+    <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Open navigation menu" aria-controls="sidebar" aria-expanded="false">
+      <i class="fas fa-bars" aria-hidden="true"></i>
+    </button>
     <div class="header-brand">
       <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
       <div class="brand-text">
@@ -1193,6 +1296,7 @@ $ingredientAlertCount = $criticalIngredientCount + $lowIngredientCount;
     </div>
   </header>
 
+  <div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
   <nav id="sidebar">
     <div class="sidebar-section-label">Staff Panel</div>
     <a href="staffdashboard.php" class="nav-item active"><i class="fas fa-chart-line"></i> Dashboard</a>
@@ -1295,13 +1399,13 @@ $ingredientAlertCount = $criticalIngredientCount + $lowIngredientCount;
                     $statusPillClass = $isCancelled ? 'pill-red' : 'pill-success';
                     $methodLabel = $tx['payment_method'] === 'online' ? 'Online' : 'Cash';
                   ?>
-                  <tr>
-                    <td class="text-mono">#<?= (int)$tx['daily_transaction_number'] ?></td>
-                    <td><?= htmlspecialchars($tx['items_summary'] ?? '—') ?></td>
-                    <td class="text-mono text-gold">₱<?= number_format((float)$tx['transaction_total'], 2) ?></td>
-                    <td><?= $methodLabel ?></td>
-                    <td><?= htmlspecialchars($tx['username']) ?></td>
-                    <td><span class="status-pill <?= $statusPillClass ?>"><?= $statusLabel ?></span></td>
+                  <tr data-mobile-card>
+                    <td class="text-mono" data-label="Order">#<?= (int)$tx['daily_transaction_number'] ?></td>
+                    <td data-label="Items"><?= htmlspecialchars($tx['items_summary'] ?? '—') ?></td>
+                    <td class="text-mono text-gold" data-label="Amount">₱<?= number_format((float)$tx['transaction_total'], 2) ?></td>
+                    <td data-label="Method"><?= $methodLabel ?></td>
+                    <td data-label="Staff"><?= htmlspecialchars($tx['username']) ?></td>
+                    <td data-label="Status"><span class="status-pill <?= $statusPillClass ?>"><?= $statusLabel ?></span></td>
                   </tr>
                 <?php endforeach; ?>
               <?php endif; ?>
@@ -1339,6 +1443,20 @@ $ingredientAlertCount = $criticalIngredientCount + $lowIngredientCount;
   <script>
     document.addEventListener('DOMContentLoaded', () => {
       updateClock(); setInterval(updateClock, 1000);
+
+      const menuToggle = document.getElementById('menu-toggle');
+      const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+      const setSidebarOpen = isOpen => {
+        document.body.classList.toggle('sidebar-open', isOpen);
+        menuToggle.setAttribute('aria-expanded', String(isOpen));
+        menuToggle.setAttribute('aria-label', isOpen ? 'Close navigation menu' : 'Open navigation menu');
+        menuToggle.innerHTML = `<i class="fas ${isOpen ? 'fa-xmark' : 'fa-bars'}" aria-hidden="true"></i>`;
+      };
+      menuToggle.addEventListener('click', () => setSidebarOpen(!document.body.classList.contains('sidebar-open')));
+      sidebarBackdrop.addEventListener('click', () => setSidebarOpen(false));
+      document.querySelectorAll('#sidebar a').forEach(link => link.addEventListener('click', () => setSidebarOpen(false)));
+      document.addEventListener('keydown', event => { if (event.key === 'Escape') setSidebarOpen(false); });
+      window.addEventListener('resize', () => { if (window.innerWidth >= 992) setSidebarOpen(false); });
 
       const dashDate = document.getElementById('dash-date');
       if (dashDate) dashDate.textContent = 'Overview — ' + new Date().toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });

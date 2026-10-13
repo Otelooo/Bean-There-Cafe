@@ -372,6 +372,38 @@ $stmt->close();
     .toast-msg.success { border-left:3px solid var(--sage); }
     .toast-msg.warn    { border-left:3px solid #e67e22; }
     @keyframes toastIn { from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:translateY(0);} }
+    .menu-toggle { display: none; }
+    @media (max-width: 760px) {
+      .header-brand { width: auto; flex: 1; border: 0; }
+      .header-center { display: none; }
+      .brand-text .sub, .header-user, .header-clock { display: none; }
+      .menu-toggle {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 40px; height: 40px; margin-left: auto; border: 1px solid rgba(255,255,255,.16);
+        border-radius: 9px; background: rgba(255,255,255,.07); color: var(--cream);
+        font-size: 18px; cursor: pointer;
+      }
+      #sidebar { transform: translateX(-100%); transition: transform .22s ease; box-shadow: var(--shadow-lg); }
+      body.sidebar-open #sidebar { transform: translateX(0); }
+      body.sidebar-open::after { content: ""; position: fixed; inset: var(--header-h) 0 0; z-index: 899; background: rgba(20,10,8,.4); }
+      body.sidebar-open { overflow-y: hidden; }
+      #main { margin-left: 0; }
+      .page-strip { align-items: flex-start; flex-direction: column; gap: 12px; padding: 15px 18px; }
+      .settings-content { padding: 18px !important; }
+      #main > form[style*="padding:0 26px 22px"] { padding: 0 18px 18px !important; }
+      .settings-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+      .settings-card { padding: 19px 18px; margin-bottom: 14px; }
+      .btn-primary { justify-content: center; }
+      #toast-container { right: 14px; bottom: 14px; left: 14px; }
+    }
+    @media (max-width: 520px) {
+      #app-header { padding-right: 14px; }
+      .header-brand { gap: 8px; padding: 0 14px; }
+      .page-strip h1 { font-size: 19px; }
+      .settings-content { padding: 14px !important; }
+      .settings-field-row { grid-template-columns: minmax(0, 1fr); gap: 0; }
+      .settings-card { padding: 17px 15px; }
+    }
   </style>
 </head>
 <body>
@@ -380,6 +412,7 @@ $stmt->close();
   <div class="header-brand">
     <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
     <div class="brand-text"><div class="name">SmartStock</div><div class="sub">Bean There Café</div></div>
+    <button type="button" class="menu-toggle" id="sidebar-toggle" aria-label="Open navigation menu" aria-controls="sidebar" aria-expanded="false"><i class="fas fa-bars" aria-hidden="true"></i></button>
   </div>
   <div class="header-center"></div>
   <div class="header-right">
@@ -432,7 +465,7 @@ $stmt->close();
   </div>
 
   <form method="POST" action="settings.php">
-    <div style="padding:22px 26px;">
+    <div class="settings-content" style="padding:22px 26px;">
       <div class="settings-grid">
         <div class="settings-card">
           <div class="settings-card-title"><i class="fas fa-store"></i>Café Identity</div>
@@ -547,6 +580,21 @@ $stmt->close();
     updateClock(); setInterval(updateClock, 1000);
     document.querySelectorAll('.security-question-select').forEach(toggleCustomQuestion);
   });
+
+  const sidebarToggle = document.getElementById('sidebar-toggle');
+  const sidebar = document.getElementById('sidebar');
+  function setSidebarOpen(open) {
+    document.body.classList.toggle('sidebar-open', open);
+    sidebarToggle.setAttribute('aria-expanded', String(open));
+    sidebarToggle.setAttribute('aria-label', open ? 'Close navigation menu' : 'Open navigation menu');
+    sidebarToggle.innerHTML = `<i class="fas ${open ? 'fa-xmark' : 'fa-bars'}" aria-hidden="true"></i>`;
+  }
+  sidebarToggle.addEventListener('click', () => setSidebarOpen(!document.body.classList.contains('sidebar-open')));
+  document.addEventListener('click', event => {
+    if (document.body.classList.contains('sidebar-open') && !sidebar.contains(event.target) && !sidebarToggle.contains(event.target)) setSidebarOpen(false);
+  });
+  document.addEventListener('keydown', event => { if (event.key === 'Escape') setSidebarOpen(false); });
+  window.addEventListener('resize', () => { if (window.innerWidth > 760) setSidebarOpen(false); });
 
   // Shows/hides the free-text box next to each security-question picker — "Write your own…"
   // reveals it, any preset hides it, matching this app's usual toggle pattern elsewhere.

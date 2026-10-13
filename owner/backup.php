@@ -752,7 +752,41 @@ $initials    = strtoupper(substr($displayName, 0, 2));
     .sidebar-divider { border: 0; border-top: 1px solid rgba(255,255,255,.07); margin: 8px 16px; }
     .sidebar-footer { margin-top: auto; padding: 16px 20px; border-top: 1px solid rgba(255,255,255,.07); text-align: center; }
     .sidebar-footer p { font-size: 10px; color: rgba(245,236,215,.22); line-height: 1.7; }
-    @media (max-width: 760px) { #sidebar { display: none; } .header-brand { width: auto; border: 0; } .brand-text .sub, .header-user, .header-clock { display: none; } #main { margin-left: 0 !important; } .page-strip { align-items: flex-start; flex-direction: column; } .backup-password-fields { flex-direction: column; margin: 0 0 8px; } .backup-password-fields input { width: min(100%, 280px); } }
+    .menu-toggle { display: none; }
+    @media (max-width: 760px) {
+      .header-brand { width: auto; flex: 1; border: 0; }
+      .header-center { display: none; }
+      .brand-text .sub, .header-user, .header-clock { display: none; }
+      .menu-toggle {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 40px; height: 40px; margin-left: auto; border: 1px solid rgba(255,255,255,.16);
+        border-radius: 9px; background: rgba(255,255,255,.07); color: var(--cream);
+        font-size: 18px; cursor: pointer;
+      }
+      #sidebar { transform: translateX(-100%); transition: transform .22s ease; box-shadow: var(--shadow-lg); }
+      body.sidebar-open #sidebar { transform: translateX(0); }
+      body.sidebar-open::after { content: ""; position: fixed; inset: var(--header-h) 0 0; z-index: 899; background: rgba(20,10,8,.4); }
+      body.sidebar-open { overflow-y: hidden; }
+      #main { margin-left: 0 !important; }
+      .page-strip { align-items: stretch; flex-direction: column; padding: 16px 18px; }
+      .page-strip > form { width: 100%; }
+      .backup-password-fields { flex-direction: column; margin: 0 0 8px; }
+      .backup-password-fields input { width: 100%; }
+      #create-backup-btn { justify-content: center; width: 100%; }
+      .content-pad { padding: 18px; }
+      .info-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); }
+      .modal-actions { flex-direction: column; }
+      .modal-actions .btn { justify-content: center; width: 100%; }
+      .panel-head { padding: 15px 18px; }
+      .banner { margin-right: 18px; margin-left: 18px; }
+    }
+    @media (max-width: 420px) {
+      #app-header { padding-right: 14px; }
+      .header-brand { gap: 8px; padding: 0 14px; }
+      .page-strip h1 { font-size: 19px; }
+      .content-pad { padding: 14px; }
+      table.backups tr { margin: 10px; padding: 8px 11px; }
+    }
 
     /* ── MAIN ── */
     #main { margin-left: var(--sidebar-w); margin-top: var(--header-h); min-height: calc(100vh - var(--header-h)); }
@@ -784,6 +818,19 @@ $initials    = strtoupper(substr($displayName, 0, 2));
     .backup-password-fields { display: flex; gap: 8px; margin-right: 10px; }
     .backup-password-fields label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
     .backup-password-fields input { width: 180px; min-width: 0; border: 1px solid var(--cream-dark); border-radius: 8px; background: var(--cream-light); color: var(--charcoal); padding: 9px 10px; font: 12px var(--font-body); }
+    @media (max-width: 960px) {
+      .row-actions { flex-direction: column; align-items: stretch; }
+      .row-actions .btn { justify-content: center; }
+      table.backups, table.backups tbody { display: block; width: 100%; }
+      table.backups thead { display: none; }
+      table.backups tr { display: block; margin: 12px; padding: 8px 14px; border: 1px solid var(--cream-dark); border-radius: var(--radius); background: var(--cream-light); box-shadow: var(--shadow-sm); }
+      table.backups td { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--cream-dark); overflow-wrap: anywhere; }
+      table.backups td::before { content: attr(data-label); flex: 0 0 76px; font-size: 10px; font-weight: 700; letter-spacing: .7px; text-transform: uppercase; color: var(--mocha-mid); }
+      table.backups td:last-child { border-bottom: 0; }
+      table.backups td.empty { display: block; text-align: center; }
+      table.backups td.empty::before { content: none; }
+      .row-actions { flex: 1; min-width: 0; }
+    }
 
     /* ── BUTTONS ── */
     .btn { display: inline-flex; align-items: center; gap: 7px; border: 0; border-radius: 9px; padding: 10px 16px; font: 600 13px var(--font-body); cursor: pointer; transition: all .2s; }
@@ -834,6 +881,7 @@ $initials    = strtoupper(substr($displayName, 0, 2));
   <div class="header-brand">
     <div class="brand-logo"><i class="fas fa-mug-hot"></i></div>
     <div class="brand-text"><div class="name">SmartStock</div><div class="sub">Bean There Café</div></div>
+    <button type="button" class="menu-toggle" id="sidebar-toggle" aria-label="Open navigation menu" aria-controls="sidebar" aria-expanded="false"><i class="fas fa-bars" aria-hidden="true"></i></button>
   </div>
   <div class="header-center"></div>
   <div class="header-right">
@@ -961,10 +1009,10 @@ $initials    = strtoupper(substr($displayName, 0, 2));
             <tr><td class="empty" colspan="4"><i class="fas fa-inbox" style="display:block;font-size:26px;color:var(--cream-dark);margin-bottom:10px;"></i>No backups stored yet. Click <strong>Create Backup Now</strong> to make the first one.</td></tr>
           <?php else: foreach ($backups as $item): ?>
             <tr>
-              <td class="file-name"><?= htmlspecialchars($item['name']) ?></td>
-              <td><?= date('M j, Y g:i:s A', $item['mtime']) ?></td>
-              <td><?= backup_format_size($item['size']) ?></td>
-              <td>
+              <td class="file-name" data-label="File"><?= htmlspecialchars($item['name']) ?></td>
+              <td data-label="Created"><?= date('M j, Y g:i:s A', $item['mtime']) ?></td>
+              <td data-label="Size"><?= backup_format_size($item['size']) ?></td>
+              <td data-label="Actions">
                 <div class="row-actions">
                   <a class="btn btn-outline btn-sm" href="backup.php?action=download&file=<?= urlencode($item['name']) ?>"><i class="fas fa-download"></i> Download</a>
                   <button type="button" class="btn btn-outline btn-sm" onclick="openChangePassword('<?= htmlspecialchars($item['name'], ENT_QUOTES) ?>')"><i class="fas fa-key"></i> Change Password</button>
@@ -1058,6 +1106,21 @@ $initials    = strtoupper(substr($displayName, 0, 2));
 <script>
 document.getElementById('clock').textContent = new Date().toLocaleTimeString('en-PH');
 setInterval(() => document.getElementById('clock').textContent = new Date().toLocaleTimeString('en-PH'), 1000);
+
+const sidebarToggle = document.getElementById('sidebar-toggle');
+const sidebar = document.getElementById('sidebar');
+function setSidebarOpen(open) {
+  document.body.classList.toggle('sidebar-open', open);
+  sidebarToggle.setAttribute('aria-expanded', String(open));
+  sidebarToggle.setAttribute('aria-label', open ? 'Close navigation menu' : 'Open navigation menu');
+  sidebarToggle.innerHTML = `<i class="fas ${open ? 'fa-xmark' : 'fa-bars'}" aria-hidden="true"></i>`;
+}
+sidebarToggle.addEventListener('click', () => setSidebarOpen(!document.body.classList.contains('sidebar-open')));
+document.addEventListener('click', event => {
+  if (document.body.classList.contains('sidebar-open') && !sidebar.contains(event.target) && !sidebarToggle.contains(event.target)) setSidebarOpen(false);
+});
+document.addEventListener('keydown', event => { if (event.key === 'Escape') setSidebarOpen(false); });
+window.addEventListener('resize', () => { if (window.innerWidth > 760) setSidebarOpen(false); });
 
 document.querySelectorAll('#toast-container .toast-msg').forEach(toast => {
   window.setTimeout(() => {

@@ -184,12 +184,65 @@ function expense_datetime_value(string $value): string
         .outline:hover { color:var(--cream); background:var(--mocha); }
         @media print { header, nav, .strip-actions, .toolbar, .filter-panel, .actions, .toast { display:none !important; } main { margin:0; } .content { padding:0; } .table-wrap { border:0; box-shadow:none; } body { background:#fff; } }
 
+    .menu-toggle { display:none; width:40px; height:40px; flex-shrink:0; align-items:center; justify-content:center; border:1px solid rgba(255,255,255,.18); border-radius:8px; background:rgba(255,255,255,.07); color:var(--cream); font-size:18px; cursor:pointer; }
+    .sidebar-backdrop { display:none; }
+    @media (max-width:991.98px) {
+      :root { --sidebar:240px; }
+      main { margin-left:0; }
+      nav { width:min(var(--sidebar),84vw); transform:translateX(-100%); transition:transform .25s ease; z-index:900; box-shadow:0 12px 40px rgba(74,44,42,.22); }
+      body.sidebar-open nav { transform:translateX(0); }
+      .sidebar-backdrop { position:fixed; inset:var(--header) 0 0; z-index:850; background:rgba(20,10,8,.5); }
+      body.sidebar-open .sidebar-backdrop { display:block; }
+      .menu-toggle { display:inline-flex; }
+      .brand { width:auto; min-width:0; padding:0 14px; border:0; }
+      header { padding-left:12px; }
+    }
+    @media (max-width:767.98px) {
+      :root { --header:58px; }
+      header { padding-right:12px; }
+      .logo { width:36px; height:36px; font-size:17px; }
+      .brand strong { font-size:13px; }
+      .brand small { display:none; }
+      .header-right { gap:8px; }
+      .header-right .user, .clock { display:none; }
+      .logout { padding:7px 10px; font-size:0; }
+      .logout i { font-size:14px; }
+      .strip, .content { padding-left:16px; padding-right:16px; }
+      .strip { align-items:flex-start; flex-direction:column; }
+      .strip-actions { width:100%; flex-direction:column; }
+      .strip-actions button { width:100%; min-height:42px; justify-content:center; }
+      .filter-panel { align-items:stretch; flex-direction:column; }
+      .filter-panel .field, .filter-panel input, .filter-panel select, .filter-panel button { width:100%; }
+      .toolbar, .filters { width:100%; align-items:stretch; flex-direction:column; }
+      .filters input, .filters select { width:100%; min-width:0; min-height:42px; }
+      .toolbar > strong { text-align:right; }
+      .table-wrap { overflow:visible; background:transparent; border:0; box-shadow:none; }
+      table, tbody { display:block; width:100%; min-width:0; }
+      thead { display:none; }
+      tbody { display:grid; gap:12px; }
+      tbody tr:not([data-mobile-card]) { display:block; background:var(--cream); border:1.5px solid var(--line); border-radius:12px; }
+      tbody tr[data-mobile-card] { display:grid; grid-template-columns:minmax(0,1fr); padding:12px 14px; background:var(--cream); border:1.5px solid var(--line); border-radius:12px; box-shadow:0 2px 8px #4a2c2a1a; }
+      tbody tr[data-mobile-card] td { min-width:0; display:flex; align-items:flex-start; justify-content:space-between; gap:12px; padding:9px 0; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+      tbody tr[data-mobile-card] td::before { content:attr(data-label); flex:0 0 auto; color:#81736a; font-size:10px; font-weight:700; letter-spacing:.5px; text-align:left; text-transform:uppercase; }
+      tbody tr[data-mobile-card] td:last-child { border-bottom:0; }
+      tbody tr[data-mobile-card] td:last-child::before { content:"Actions"; }
+      tbody tr[data-mobile-card] .actions { flex-wrap:wrap; justify-content:flex-end; }
+      tbody tr[data-mobile-card] .actions button { min-width:40px; min-height:38px; }
+      .modal { padding:22px 18px !important; }
+    }
+    @media (max-width:380px) {
+      .brand { gap:8px; padding:0 8px; }
+      header { padding-left:8px; }
+      .logout { padding:7px 8px; }
+    }
+
   </style>
 </head>
 <body>
-<header><div class="brand"><div class="logo"><i class="fas fa-mug-hot"></i></div><div><strong>SmartStock</strong><small>Bean There Café</small></div></div><div class="header-right"><span class="clock" id="clock"></span><span class="user"><span class="avatar"><?= htmlspecialchars($initials) ?></span><?= htmlspecialchars($displayName) ?></span><a class="logout" href="../logout.php"><i class="fas fa-right-from-bracket"></i> Logout</a></div></header>
+<header><button type="button" class="menu-toggle" id="menu-toggle" aria-label="Open navigation menu" aria-controls="sidebar" aria-expanded="false"><i class="fas fa-bars" aria-hidden="true"></i></button><div class="brand"><div class="logo"><i class="fas fa-mug-hot"></i></div><div><strong>SmartStock</strong><small>Bean There Café</small></div></div><div class="header-right"><span class="clock" id="clock"></span><span class="user"><span class="avatar"><?= htmlspecialchars($initials) ?></span><?= htmlspecialchars($displayName) ?></span><a class="logout" href="../logout.php"><i class="fas fa-right-from-bracket"></i> Logout</a></div></header>
 
-<nav>
+<div class="sidebar-backdrop" id="sidebar-backdrop" aria-hidden="true"></div>
+<nav id="sidebar">
     <div class="section">Owner Panel</div>
     <a class="nav-item" href="dashboard.php"><i class="fas fa-chart-line"></i> Dashboard</a>
     <a class="nav-item" href="transactions.php"><i class="fas fa-receipt"></i> Transactions</a>
@@ -212,7 +265,7 @@ function money(value) { return '₱' + Number(value).toLocaleString(undefined, {
 function esc(value) { const node = document.createElement('span'); node.textContent = value ?? ''; return node.innerHTML; }
 function displayTime(value) { const date = new Date(String(value).replace(' ', 'T')); return Number.isNaN(date.getTime()) ? value : date.toLocaleString('en-PH', {dateStyle:'medium', timeStyle:'short'}); }
 function filteredExpenses() { const search = document.getElementById('search').value.toLowerCase().trim(); const category = document.getElementById('category-filter').value; const dateFrom = document.getElementById('date-from').value; const dateTo = document.getElementById('date-to').value; const hourFrom = document.getElementById('hour-from').value; const hourTo = document.getElementById('hour-to').value; return expenses.filter(item => { const value = String(item.expense_time).replace(' ', 'T'); const date = value.slice(0, 10); const hour = value.slice(11, 16); const hourMatches = (!hourFrom || !hourTo) || (hourFrom <= hourTo ? hour >= hourFrom && hour <= hourTo : hour >= hourFrom || hour <= hourTo); return (!search || item.expense_name.toLowerCase().includes(search)) && (!category || item.expense_category === category) && (!dateFrom || date >= dateFrom) && (!dateTo || date <= dateTo) && hourMatches; }); }
-function renderExpenses() { const rows = filteredExpenses(); document.getElementById('total').textContent = money(rows.reduce((sum, item) => sum + Number(item.expense_price), 0)); document.getElementById('expense-list').innerHTML = rows.length ? rows.map(item => `<tr><td><strong>${esc(item.expense_name)}</strong></td><td><span class="tag">${esc(categoryLabels[item.expense_category])}</span></td><td class="money">${money(item.expense_price)}</td><td>${esc(displayTime(item.expense_time))}</td><td>${esc(item.inserted_by || 'Unknown')}</td><td><div class="actions"><button type="button" class="small" onclick="editExpense(${item.expense_id})"><i class="fas fa-pen"></i></button><form method="post" onsubmit="return confirm('Delete this expense?')"><input type="hidden" name="action" value="delete"><input type="hidden" name="expense_id" value="${item.expense_id}"><button type="submit" class="small danger"><i class="fas fa-trash"></i></button></form></div></td></tr>`).join('') : '<tr><td class="empty" colspan="6">No expenses match the selected filters.</td></tr>'; }
+function renderExpenses() { const rows = filteredExpenses(); document.getElementById('total').textContent = money(rows.reduce((sum, item) => sum + Number(item.expense_price), 0)); document.getElementById('expense-list').innerHTML = rows.length ? rows.map(item => `<tr data-mobile-card><td data-label="Expense"><strong>${esc(item.expense_name)}</strong></td><td data-label="Category"><span class="tag">${esc(categoryLabels[item.expense_category])}</span></td><td data-label="Price" class="money">${money(item.expense_price)}</td><td data-label="Time">${esc(displayTime(item.expense_time))}</td><td data-label="Inserted By">${esc(item.inserted_by || 'Unknown')}</td><td data-label="Actions"><div class="actions"><button type="button" class="small" aria-label="Edit expense" onclick="editExpense(${item.expense_id})"><i class="fas fa-pen"></i></button><form method="post" onsubmit="return confirm('Delete this expense?')"><input type="hidden" name="action" value="delete"><input type="hidden" name="expense_id" value="${item.expense_id}"><button type="submit" class="small danger" aria-label="Delete expense"><i class="fas fa-trash"></i></button></form></div></td></tr>`).join('') : '<tr><td class="empty" colspan="6">No expenses match the selected filters.</td></tr>'; }
 function filterExpenses() { renderExpenses(); }
 function clearExpenseFilters() { ['search','category-filter','date-from','date-to','hour-from','hour-to'].forEach(id => document.getElementById(id).value = ''); renderExpenses(); }
 function printExpenses() { const rows = filteredExpenses(); if (!rows.length) { alert('No expenses match the selected filters.'); return; } window.print(); }
@@ -220,6 +273,13 @@ function openExpenseModal(item = null) { document.getElementById('expense-modal'
 function editExpense(id) { openExpenseModal(expenses.find(item => item.expense_id === id)); }
 function closeExpenseModal() { document.getElementById('expense-modal').classList.remove('show'); }
 document.getElementById('expense-modal').addEventListener('click', event => { if (event.target.id === 'expense-modal') closeExpenseModal(); });
+const menuToggle = document.getElementById('menu-toggle');
+const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+function setSidebarOpen(open) { document.body.classList.toggle('sidebar-open', open); menuToggle.setAttribute('aria-expanded', String(open)); menuToggle.setAttribute('aria-label', open ? 'Close navigation menu' : 'Open navigation menu'); menuToggle.innerHTML = `<i class="fas fa-${open ? 'xmark' : 'bars'}" aria-hidden="true"></i>`; }
+menuToggle.addEventListener('click', () => setSidebarOpen(!document.body.classList.contains('sidebar-open')));
+sidebarBackdrop.addEventListener('click', () => setSidebarOpen(false));
+document.querySelectorAll('#sidebar .nav-item').forEach(link => link.addEventListener('click', () => setSidebarOpen(false)));
+document.addEventListener('keydown', event => { if (event.key === 'Escape') setSidebarOpen(false); });
 document.getElementById('clock').textContent = new Date().toLocaleTimeString('en-PH'); setInterval(() => document.getElementById('clock').textContent = new Date().toLocaleTimeString('en-PH'), 1000); renderExpenses();
 </script>
 </body>
